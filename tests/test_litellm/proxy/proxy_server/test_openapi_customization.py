@@ -22,6 +22,7 @@ from litellm.proxy.proxy_server import (
     _generate_stable_operation_id,
     _get_cors_config,
     _inject_websocket_stubs_into_openapi_schema,
+    _sanitize_xhub_openapi_documentation,
     _strip_operation_id_method_suffix,
     custom_openapi,
     ensure_unique_openapi_operation_ids,
@@ -213,6 +214,55 @@ def test_inject_websocket_stubs_into_openapi_schema_missing_paths_key_raises_err
     route = SimpleNamespace(path="/ws/x", name="ws_x", dependant=None)
     with pytest.raises(KeyError):
         _inject_websocket_stubs_into_openapi_schema(schema, [route])
+
+
+# ---------------------------------------------------------------------------
+# XHub OpenAPI documentation branding
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_xhub_openapi_documentation_preserves_api_contract():
+    schema = {
+        "info": {
+            "title": "LiteLLM API",
+            "description": "LiteLLM docs: https://docs.litellm.ai/docs/proxy",
+            "contact": {"name": "LiteLLM Support", "url": "https://litellm.ai"},
+        },
+        "externalDocs": {"description": "LiteLLM docs", "url": "https://docs.litellm.ai"},
+        "paths": {
+            "/litellm/health": {
+                "get": {
+                    "summary": "LiteLLM health",
+                    "tags": ["LiteLLM Management"],
+                    "operationId": "litellm_health_get",
+                    "responses": {"200": {"description": "LiteLLM is healthy"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "LiteLLMRequest": {
+                    "type": "object",
+                    "properties": {"litellm_params": {"type": "string"}},
+                }
+            }
+        },
+    }
+
+    result = _sanitize_xhub_openapi_documentation(schema)
+
+    assert result["info"]["title"] == "XHub API"
+    assert result["info"]["description"] == "XHub docs: "
+    assert result["info"]["contact"] == {"name": "XHub Support"}
+    assert "externalDocs" not in result
+    assert "/litellm/health" in result["paths"]
+    operation = result["paths"]["/litellm/health"]["get"]
+    assert operation["summary"] == "XHub health"
+    assert operation["tags"] == ["XHub Management"]
+    assert operation["operationId"] == "litellm_health_get"
+    assert operation["responses"]["200"]["description"] == "XHub is healthy"
+    assert "LiteLLMRequest" in result["components"]["schemas"]
+    assert "litellm_params" in result["components"]["schemas"]["LiteLLMRequest"]["properties"]
 
 
 # ---------------------------------------------------------------------------

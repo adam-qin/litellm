@@ -694,28 +694,20 @@ if global_max_parallel_request_retry_timeout_env is None:
 else:
     global_max_parallel_request_retry_timeout = float(global_max_parallel_request_retry_timeout_env)
 
-ui_link = f"{server_root_path}/ui"
-fallback_login_link = f"{server_root_path}/fallback/login"
-model_hub_link = f"{server_root_path}/ui/model_hub_table"
-ui_message = f"👉 [```LiteLLM Admin Panel on /ui```]({ui_link}). Create, Edit Keys with SSO. Having issues? Try [```Fallback Login```]({fallback_login_link})"
-ui_message += "\n\n💸 [```LiteLLM Model Cost Map```](https://models.litellm.ai/)."
-
-ui_message += f"\n\n🔎 [```LiteLLM Model Hub```]({model_hub_link}). See available models on the proxy. [**Docs**](https://docs.litellm.ai/docs/proxy/ai_hub)"
-
-custom_swagger_message = (
-    "[**Customize Swagger Docs**](https://docs.litellm.ai/docs/proxy/enterprise#swagger-docs---custom-routes--branding)"
+_root_path_prefix = f"/{server_root_path.strip('/')}" if server_root_path.strip("/") else ""
+ui_link = f"{_root_path_prefix}/ui/"
+ui_message = (
+    f"[**Log in to the XHub Admin UI**]({ui_link}) to manage models, virtual keys, "
+    "teams, budgets, and proxy settings."
 )
 
 ### CUSTOM BRANDING [ENTERPRISE FEATURE] ###
-_title = os.getenv("DOCS_TITLE", "LiteLLM API") if premium_user else "LiteLLM API"
-_description = (
-    os.getenv(
-        "DOCS_DESCRIPTION",
-        f"Enterprise Edition \n\nProxy Server to call 100+ LLMs in the OpenAI format. {custom_swagger_message}\n\n{ui_message}",
-    )
-    if premium_user
-    else f"Proxy Server to call 100+ LLMs in the OpenAI format. {custom_swagger_message}\n\n{ui_message}"
+_title = os.getenv("DOCS_TITLE", "XHub API") if premium_user else "XHub API"
+_default_description = (
+    "XHub model gateway API. Use the OpenAI-compatible endpoints below to connect "
+    f"upstream model providers with downstream applications.\n\n{ui_message}"
 )
+_description = os.getenv("DOCS_DESCRIPTION", _default_description) if premium_user else _default_description
 
 
 def cleanup_router_config_variables():
@@ -1264,6 +1256,45 @@ def _inject_websocket_stubs_into_openapi_schema(openapi_schema: dict, websocket_
     return openapi_schema
 
 
+_OPENAPI_VISIBLE_TEXT_FIELDS = {"title", "summary", "description"}
+_LITELLM_OFFICIAL_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?(?:docs|models)?\.?litellm\.ai[^\s)\]>]*", re.IGNORECASE
+)
+
+
+def _sanitize_xhub_openapi_documentation(value: Any, parent_key: Optional[str] = None) -> Any:
+    """Apply XHub branding to user-visible OpenAPI documentation only.
+
+    Structural identifiers such as paths, schema names, property names, operation IDs,
+    enum values, examples, and references are intentionally left unchanged so existing
+    API clients and generated SDKs remain compatible.
+    """
+
+    if isinstance(value, dict):
+        sanitized: dict = {}
+        for key, item in value.items():
+            if key == "url" and isinstance(item, str) and _LITELLM_OFFICIAL_URL_PATTERN.match(item):
+                continue
+            if key == "name" and isinstance(item, str) and parent_key in {"contact", "license", "tags"}:
+                sanitized[key] = re.sub(r"LiteLLM", "XHub", item, flags=re.IGNORECASE)
+            elif key in _OPENAPI_VISIBLE_TEXT_FIELDS and isinstance(item, str):
+                branded_text = re.sub(r"LiteLLM", "XHub", item, flags=re.IGNORECASE)
+                branded_text = _LITELLM_OFFICIAL_URL_PATTERN.sub("", branded_text)
+                sanitized[key] = branded_text
+            elif key == "externalDocs" and isinstance(item, dict):
+                sanitized_external_docs = _sanitize_xhub_openapi_documentation(item, key)
+                if sanitized_external_docs.get("url"):
+                    sanitized[key] = sanitized_external_docs
+            else:
+                sanitized[key] = _sanitize_xhub_openapi_documentation(item, key)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_xhub_openapi_documentation(item, parent_key) for item in value]
+    if isinstance(value, str) and parent_key == "tags":
+        return re.sub(r"LiteLLM", "XHub", value, flags=re.IGNORECASE)
+    return value
+
+
 def get_openapi_schema():
     if app.openapi_schema:
         return app.openapi_schema
@@ -1298,6 +1329,7 @@ def get_openapi_schema():
 
     openapi_schema = inject_lazy_stubs(openapi_schema)
     openapi_schema = ensure_unique_openapi_operation_ids(openapi_schema)
+    openapi_schema = _sanitize_xhub_openapi_documentation(openapi_schema)
 
     # Fix Swagger UI execute path error when server_root_path is set
     if server_root_path:
@@ -1330,6 +1362,7 @@ def custom_openapi():
 
     openapi_schema = inject_lazy_stubs(openapi_schema)
     openapi_schema = ensure_unique_openapi_operation_ids(openapi_schema)
+    openapi_schema = _sanitize_xhub_openapi_documentation(openapi_schema)
 
     # Fix Swagger UI execute path error when server_root_path is set
     if server_root_path:

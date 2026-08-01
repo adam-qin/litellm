@@ -26,7 +26,6 @@ import {
   Bell,
   Boxes,
   ChevronRight,
-  Code2,
   KeyRound,
   Network,
   Palette,
@@ -34,7 +33,6 @@ import {
   PanelLeftOpen,
   PlayCircle,
   Route,
-  ScrollText,
   Settings as SettingsIcon,
   User,
   Users,
@@ -103,13 +101,6 @@ const menuGroups: MenuGroup[] = [
         icon: <Network {...ICON} />,
         roles: rolesAllowedToViewWriteScopedPages,
       },
-      {
-        key: "policies",
-        page: "policies",
-        label: "Policies",
-        icon: <ScrollText {...ICON} />,
-        roles: all_admin_roles,
-      },
     ],
   },
   {
@@ -139,10 +130,6 @@ const menuGroups: MenuGroup[] = [
       },
       { key: "budgets", page: "budgets", label: "Budgets", icon: <Wallet {...ICON} />, roles: all_admin_roles },
     ],
-  },
-  {
-    groupLabel: "DEVELOPER TOOLS",
-    items: [{ key: "api_ref", page: "api_ref", label: "API Reference", icon: <Code2 {...ICON} /> }],
   },
   {
     groupLabel: "SETTINGS",
@@ -227,7 +214,6 @@ const SECTION_DISPLAY: Record<string, string> = {
   "AI GATEWAY": "AI Gateway",
   OBSERVABILITY: "Observability",
   "ACCESS CONTROL": "Access Control",
-  "DEVELOPER TOOLS": "Developer Tools",
   SETTINGS: "Settings",
 };
 
