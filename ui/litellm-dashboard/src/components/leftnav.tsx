@@ -1,5 +1,4 @@
 import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrganizations";
-import { useTeams } from "@/app/(dashboard)/hooks/teams/useTeams";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { useHealthReadinessDetails } from "@/app/(dashboard)/hooks/healthReadiness/useHealthReadinessDetails";
 import { useLogout } from "@/app/(dashboard)/hooks/useLogout";
@@ -25,22 +24,10 @@ import {
   Activity,
   BarChart3,
   Bell,
-  Blocks,
-  Bot,
-  BookOpen,
-  Building2,
   Boxes,
   ChevronRight,
   Code2,
-  Database,
-  ExternalLink,
-  FileText,
-  FlaskConical,
-  Folder,
-  HeartPulse,
   KeyRound,
-  LayoutGrid,
-  MessageSquare,
   Network,
   Palette,
   PanelLeftClose,
@@ -48,18 +35,10 @@ import {
   PlayCircle,
   Route,
   ScrollText,
-  Search,
-  Server,
   Settings as SettingsIcon,
-  Shield,
-  ShieldCheck,
-  Tags,
-  Terminal,
   User,
   Users,
   Wallet,
-  Wrench,
-  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -68,7 +47,6 @@ import {
   all_admin_roles,
   internalUserRoles,
   isAdminRole,
-  isUserTeamAdminForAnyTeam,
   rolesAllowedToViewWriteScopedPages,
   rolesWithWriteAccess,
 } from "../utils/roles";
@@ -86,12 +64,6 @@ interface SidebarProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   enabledPagesInternalUsers?: string[] | null;
-  enableProjectsUI?: boolean;
-  enableChatUI?: boolean;
-  disableAgentsForInternalUsers?: boolean;
-  allowAgentsForTeamAdmins?: boolean;
-  disableVectorStoresForInternalUsers?: boolean;
-  allowVectorStoresForTeamAdmins?: boolean;
 }
 
 interface MenuItem {
@@ -101,7 +73,6 @@ interface MenuItem {
   roles?: string[];
   children?: MenuItem[];
   icon?: React.ReactNode;
-  external_url?: string;
 }
 
 interface MenuGroup {
@@ -126,16 +97,6 @@ const menuGroups: MenuGroup[] = [
         roles: rolesWithWriteAccess,
       },
       {
-        key: "chat",
-        page: "chat",
-        label: (
-          <span className="flex items-center gap-2">
-            Chat <NewBadge />
-          </span>
-        ),
-        icon: <MessageSquare {...ICON} />,
-      },
-      {
         key: "models",
         page: "models",
         label: "Models + Endpoints",
@@ -143,42 +104,11 @@ const menuGroups: MenuGroup[] = [
         roles: rolesAllowedToViewWriteScopedPages,
       },
       {
-        key: "agentic",
-        page: "agentic",
-        label: "Agentic",
-        icon: <Bot {...ICON} />,
-        children: [
-          {
-            key: "agents",
-            page: "agents",
-            label: "Agents",
-            icon: <Bot {...ICON} />,
-            roles: rolesAllowedToViewWriteScopedPages,
-          },
-          { key: "workflows", page: "workflows", label: "Workflow Runs", icon: <Workflow {...ICON} /> },
-          { key: "memory", page: "memory", label: "Memory", icon: <Database {...ICON} /> },
-        ],
-      },
-      { key: "mcp-servers", page: "mcp-servers", label: "MCP Servers", icon: <Server {...ICON} /> },
-      { key: "skills", page: "skills", label: "Skills", icon: <Blocks {...ICON} />, roles: all_admin_roles },
-      { key: "guardrails", page: "guardrails", label: "Guardrails", icon: <Shield {...ICON} /> },
-      {
         key: "policies",
         page: "policies",
         label: "Policies",
         icon: <ScrollText {...ICON} />,
         roles: all_admin_roles,
-      },
-      {
-        key: "tools",
-        page: "tools",
-        label: "Tools",
-        icon: <Wrench {...ICON} />,
-        children: [
-          { key: "search-tools", page: "search-tools", label: "Search Tools", icon: <Search {...ICON} /> },
-          { key: "vector-stores", page: "vector-stores", label: "Vector Stores", icon: <Database {...ICON} /> },
-          { key: "tool-policies", page: "tool-policies", label: "Tool Policies", icon: <ShieldCheck {...ICON} /> },
-        ],
       },
     ],
   },
@@ -193,38 +123,13 @@ const menuGroups: MenuGroup[] = [
         label: "Usage",
       },
       { key: "logs", page: "logs", label: "Logs", icon: <Activity {...ICON} /> },
-      {
-        key: "guardrails-monitor",
-        page: "guardrails-monitor",
-        label: "Guardrails Monitor",
-        icon: <HeartPulse {...ICON} />,
-        roles: [...all_admin_roles, ...internalUserRoles],
-      },
     ],
   },
   {
     groupLabel: "ACCESS CONTROL",
     items: [
       { key: "teams", page: "teams", label: "Teams", icon: <Users {...ICON} /> },
-      {
-        key: "projects",
-        page: "projects",
-        label: (
-          <span className="flex items-center gap-2">
-            Projects <NewBadge />
-          </span>
-        ),
-        icon: <Folder {...ICON} />,
-        roles: all_admin_roles,
-      },
       { key: "users", page: "users", label: "Internal Users", icon: <User {...ICON} />, roles: all_admin_roles },
-      {
-        key: "organizations",
-        page: "organizations",
-        label: "Organizations",
-        icon: <Building2 {...ICON} />,
-        roles: all_admin_roles,
-      },
       {
         key: "access-groups",
         page: "access-groups",
@@ -237,42 +142,7 @@ const menuGroups: MenuGroup[] = [
   },
   {
     groupLabel: "DEVELOPER TOOLS",
-    items: [
-      { key: "api_ref", page: "api_ref", label: "API Reference", icon: <Code2 {...ICON} /> },
-      { key: "model-hub-table", page: "model-hub-table", label: "AI Hub", icon: <LayoutGrid {...ICON} /> },
-      {
-        key: "learning-resources",
-        page: "learning-resources",
-        label: "Learning Resources",
-        icon: <BookOpen {...ICON} />,
-        external_url: "https://models.litellm.ai/cookbook",
-      },
-      {
-        key: "experimental",
-        page: "experimental",
-        label: "Experimental",
-        icon: <FlaskConical {...ICON} />,
-        children: [
-          { key: "caching", page: "caching", label: "Caching", icon: <Database {...ICON} />, roles: all_admin_roles },
-          { key: "prompts", page: "prompts", label: "Prompts", icon: <FileText {...ICON} />, roles: all_admin_roles },
-          {
-            key: "transform-request",
-            page: "transform-request",
-            label: "API Playground",
-            icon: <Terminal {...ICON} />,
-            roles: [...all_admin_roles, ...internalUserRoles],
-          },
-          {
-            key: "tag-management",
-            page: "tag-management",
-            label: "Tag Management",
-            icon: <Tags {...ICON} />,
-            roles: all_admin_roles,
-          },
-          { key: "4", page: "usage", label: "Old Usage", icon: <BarChart3 {...ICON} /> },
-        ],
-      },
-    ],
+    items: [{ key: "api_ref", page: "api_ref", label: "API Reference", icon: <Code2 {...ICON} /> }],
   },
   {
     groupLabel: "SETTINGS",
@@ -387,16 +257,9 @@ const Sidebar_: React.FC<SidebarProps> = ({
   collapsed = false,
   onToggleCollapsed,
   enabledPagesInternalUsers,
-  enableProjectsUI,
-  enableChatUI,
-  disableAgentsForInternalUsers,
-  allowAgentsForTeamAdmins,
-  disableVectorStoresForInternalUsers,
-  allowVectorStoresForTeamAdmins,
 }) => {
   const { userId, accessToken, userRole } = useAuthorized();
   const { data: organizations } = useOrganizations();
-  const { data: teams } = useTeams();
   const { logoUrl } = useTheme();
   const { data: healthData } = useHealthReadinessDetails(accessToken);
   const logout = useLogout(accessToken);
@@ -429,35 +292,18 @@ const Sidebar_: React.FC<SidebarProps> = ({
     );
   }, [userId, organizations]);
 
-  const isTeamAdmin = useMemo(() => isUserTeamAdminForAnyTeam(teams ?? null, userId ?? ""), [teams, userId]);
-
   const filterItemsByRole = (items: MenuItem[]): MenuItem[] => {
     const isAdmin = isAdminRole(userRole);
     return items
       .map((item) => ({ ...item, children: item.children ? filterItemsByRole(item.children) : undefined }))
       .filter((item) => {
-        if (item.key === "organizations" || item.key === "users") {
+        if (item.children && item.children.length === 0) return false;
+        if (item.key === "users") {
           const hasRoleAccess = !item.roles || item.roles.includes(userRole) || isOrgAdmin;
           if (!hasRoleAccess) return false;
           if (!isAdmin && enabledPagesInternalUsers != null) return enabledPagesInternalUsers.includes(item.page);
           return true;
         }
-        if (item.key === "projects" && !enableProjectsUI) return false;
-        if (item.key === "chat" && !enableChatUI) return false;
-        if (
-          !isAdmin &&
-          item.key === "agents" &&
-          disableAgentsForInternalUsers &&
-          !(allowAgentsForTeamAdmins && isTeamAdmin)
-        )
-          return false;
-        if (
-          !isAdmin &&
-          item.key === "vector-stores" &&
-          disableVectorStoresForInternalUsers &&
-          !(allowVectorStoresForTeamAdmins && isTeamAdmin)
-        )
-          return false;
         if (item.roles && !item.roles.includes(userRole)) return false;
         if (!isAdmin && enabledPagesInternalUsers != null) {
           if (item.children && item.children.length > 0) {
@@ -490,8 +336,8 @@ const Sidebar_: React.FC<SidebarProps> = ({
   };
 
   const handleLeafClick = (e: React.MouseEvent, item: MenuItem) => {
-    if (item.external_url) return;
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+    if (e.metaKey || e.ctrlKey) return;
+    if (e.shiftKey || e.button === 1) return;
     e.preventDefault();
     setPage(item.page);
   };
@@ -500,24 +346,6 @@ const Sidebar_: React.FC<SidebarProps> = ({
     const active = selectedKey === item.key;
     const size = isChild ? "sub" : "default";
     const label = <span className="flex-1 truncate group-data-[collapsed=true]/sidebar:hidden">{item.label}</span>;
-
-    if (item.external_url) {
-      return (
-        <a
-          key={item.key}
-          href={item.external_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={collapsed ? labelText(item) : undefined}
-          data-active={active || undefined}
-          className={cn(sidebarMenuButtonVariants({ isActive: active, size }))}
-        >
-          {item.icon}
-          {label}
-          <ExternalLink className="size-3.5 shrink-0 opacity-70 group-data-[collapsed=true]/sidebar:hidden" />
-        </a>
-      );
-    }
 
     const href = MIGRATED_PAGES[item.page] ? migratedHref(MIGRATED_PAGES[item.page]) : legacyPageHref(item.page);
     return (
@@ -577,10 +405,10 @@ const Sidebar_: React.FC<SidebarProps> = ({
       <SidebarHeader className="h-14 border-b border-border group-data-[collapsed=true]/sidebar:h-auto">
         <div className="flex items-center justify-between gap-2 group-data-[collapsed=true]/sidebar:flex-col">
           <div className="flex min-w-0 items-center gap-2">
-            <Link href={baseUrl || "/"} className="flex min-w-0 items-center" aria-label="LiteLLM home">
+            <Link href={baseUrl || "/"} className="flex min-w-0 items-center" aria-label="XHub home">
               <img
                 src={logoSrc}
-                alt="LiteLLM"
+                alt="XHub"
                 className="h-7 w-auto max-w-[150px] object-contain group-data-[collapsed=true]/sidebar:w-7"
               />
             </Link>

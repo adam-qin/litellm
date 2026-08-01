@@ -149,8 +149,12 @@ function LoginPageContent() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="w-full max-w-lg shadow-md">
           <Space direction="vertical" size="middle" className="w-full">
-            <div className="text-center">
-              <Title level={2}>🚅 LiteLLM</Title>
+            <div className="flex justify-center">
+              <img
+                src={`${getProxyBaseUrl()}/get_image`}
+                alt="XHub"
+                className="h-12 w-auto max-w-[220px] object-contain"
+              />
             </div>
 
             <Alert
@@ -179,13 +183,17 @@ function LoginPageContent() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Card className="w-full max-w-lg shadow-md">
         <Space direction="vertical" size="middle" className="w-full">
-          <div className="text-center">
-            <Title level={2}>🚅 LiteLLM</Title>
+          <div className="flex justify-center">
+            <img
+              src={`${getProxyBaseUrl()}/get_image`}
+              alt="XHub"
+              className="h-12 w-auto max-w-[220px] object-contain"
+            />
           </div>
 
           <div className="text-center">
             <Title level={3}>Login</Title>
-            <Text type="secondary">Access your LiteLLM Admin UI.</Text>
+            <Text type="secondary">Access your XHub Admin UI.</Text>
           </div>
 
           {!uiConfig?.hide_default_credentials_hint && (
@@ -195,7 +203,7 @@ function LoginPageContent() {
                 <>
                   <Paragraph className="text-sm">
                     By default, Username is <code className="bg-gray-100 px-1 py-0.5 rounded-sm text-xs">admin</code>{" "}
-                    and Password is your set LiteLLM Proxy
+                    and Password is your set XHub Proxy
                     <code className="bg-gray-100 px-1 py-0.5 rounded-sm text-xs">MASTER_KEY</code>.
                   </Paragraph>
                   <Paragraph className="text-sm">
@@ -314,7 +322,7 @@ function LoginPageContent() {
             closable
             message={
               <Text>
-                Single Sign-On (SSO) is enabled. LiteLLM no longer automatically redirects to the SSO login flow upon
+                Single Sign-On (SSO) is enabled. XHub no longer automatically redirects to the SSO login flow upon
                 loading this page. To re-enable auto-redirect-to-SSO, set{" "}
                 <Text code>AUTO_REDIRECT_UI_LOGIN_TO_SSO=true</Text> in your environment configuration.
               </Text>

@@ -1,3 +1,4 @@
+import { getProxyBaseUrl } from "@/components/networking";
 import React from "react";
 import { Alert, Button, Card, Form, Input, Typography } from "antd";
 
@@ -19,9 +20,9 @@ export function OnboardingFormBody({ variant, userEmail, isPending, claimError, 
   return (
     <div className="mx-auto w-full max-w-md mt-10">
       <Card>
-        <Typography.Title level={5} className="text-center mb-5">
-          🚅 LiteLLM
-        </Typography.Title>
+        <div className="mb-5 flex justify-center">
+          <img src={`${getProxyBaseUrl()}/get_image`} alt="XHub" className="h-10 w-auto max-w-[180px] object-contain" />
+        </div>
         <Typography.Title level={3}>{variant === "reset_password" ? "Reset Password" : "Sign Up"}</Typography.Title>
         <Typography.Text>
           {variant === "reset_password"

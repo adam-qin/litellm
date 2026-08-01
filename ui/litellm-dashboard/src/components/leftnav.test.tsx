@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../../tests/test-utils";
 import Sidebar, { menuGroups, getBreadcrumb } from "./leftnav";
@@ -10,7 +10,6 @@ vi.mock("../utils/roles", () => {
     rolesWithWriteAccess: ["admin", "internal"],
     rolesAllowedToViewWriteScopedPages: ["admin", "internal", "admin_viewer"],
     isAdminRole: (role: string) => role === "admin" || role === "admin_viewer",
-    isUserTeamAdminForAnyTeam: () => false,
   };
 });
 
@@ -43,19 +42,6 @@ vi.mock("@/app/(dashboard)/hooks/organizations/useOrganizations", () => ({
   useOrganizations: mockUseOrganizations,
 }));
 
-vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
-  useTeams: () => ({ data: [], isLoading: false, error: null }),
-}));
-
-vi.mock("@/app/(dashboard)/hooks/uiConfig/useUIConfig", () => {
-  return {
-    useUIConfig: () => ({
-      data: { admin_ui_disabled: false },
-      isLoading: false,
-    }),
-  };
-});
-
 // The redesigned sidebar reads the custom logo from ThemeContext; the test tree
 // has no ThemeProvider, so stub the hook.
 vi.mock("@/contexts/ThemeContext", () => ({
@@ -87,23 +73,14 @@ describe("Sidebar (leftnav)", () => {
       "Virtual Keys",
       "Playground",
       "Models + Endpoints",
-      "Agentic",
-      "MCP Servers",
-      "Guardrails",
       "Policies",
-      "Tools",
       "Usage",
       "Logs",
-      "Guardrails Monitor",
       "Teams",
       "Internal Users",
-      "Organizations",
       "Access Groups",
       "Budgets",
       "API Reference",
-      "AI Hub",
-      "Learning Resources",
-      "Experimental",
       "Settings",
     ];
 
@@ -112,27 +89,24 @@ describe("Sidebar (leftnav)", () => {
     });
   });
 
-  it("hides Chat by default", () => {
-    renderWithProviders(<Sidebar {...defaultProps} />);
-    expect(screen.queryByText("Chat")).not.toBeInTheDocument();
-  });
-
-  it("shows Chat when enableChatUI is true", () => {
-    renderWithProviders(<Sidebar {...defaultProps} enableChatUI />);
-    expect(screen.getByText("Chat")).toBeInTheDocument();
-  });
-
-  it("expands a nested tab to reveal its children (Tools > Search Tools)", async () => {
+  it("does not render non-core product menus", () => {
     renderWithProviders(<Sidebar {...defaultProps} />);
 
-    expect(screen.queryByText("Search Tools")).not.toBeInTheDocument();
-    act(() => {
-      fireEvent.click(screen.getByText("Tools"));
-    });
-    await waitFor(() => {
-      expect(screen.getByText("Search Tools")).toBeInTheDocument();
-    });
+    [
+      "Agentic",
+      "MCP Servers",
+      "Skills",
+      "Organizations",
+      "AI Hub",
+      "Learning Resources",
+      "Experimental",
+      "Chat",
+      "Tools",
+      "Guardrails Monitor",
+      "Projects",
+    ].forEach((label) => expect(screen.queryByText(label)).not.toBeInTheDocument());
   });
+
   it("has no duplicate keys among all menu items and their children", () => {
     // React keys must be unique across the whole nav config, otherwise the
     // active-item highlight and group expansion collide.
@@ -144,7 +118,7 @@ describe("Sidebar (leftnav)", () => {
   describe("Admin Viewer parity", () => {
     // Admin Viewer follows a "read parity with Proxy Admin, no writes, no
     // cost-incurring actions" rule. Playground stays hidden (incurs LLM
-    // cost); Models + Endpoints and Agents must be visible read-only.
+    // cost), while Models + Endpoints remains visible read-only.
     const adminViewerAuth = {
       userId: "admin-viewer-user-id",
       accessToken: "test-access-token",
@@ -168,19 +142,6 @@ describe("Sidebar (leftnav)", () => {
       expect(screen.getByText("Models + Endpoints")).toBeInTheDocument();
     });
 
-    it("shows Agents (under Agentic) to Admin Viewer (read-only)", async () => {
-      mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
-      renderWithProviders(<Sidebar {...defaultProps} />);
-      // Agents is now nested under the "Agentic" submenu — expand parent
-      // first to render the children, then assert Agents is visible.
-      act(() => {
-        fireEvent.click(screen.getByText("Agentic"));
-      });
-      await waitFor(() => {
-        expect(screen.getByText("Agents")).toBeInTheDocument();
-      });
-    });
-
     it("shows Logs to Admin Viewer", () => {
       mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
       renderWithProviders(<Sidebar {...defaultProps} />);
@@ -188,7 +149,7 @@ describe("Sidebar (leftnav)", () => {
     });
   });
 
-  it("should show Organizations tab for organization admins", () => {
+  it("shows Internal Users but not Organizations for organization admins", () => {
     mockUseAuthorized.mockReturnValueOnce({
       userId: "org-admin-user-id",
       accessToken: "test-access-token",
@@ -224,7 +185,8 @@ describe("Sidebar (leftnav)", () => {
 
     renderWithProviders(<Sidebar {...defaultProps} />);
 
-    expect(screen.getByText("Organizations")).toBeInTheDocument();
+    expect(screen.getByText("Internal Users")).toBeInTheDocument();
+    expect(screen.queryByText("Organizations")).not.toBeInTheDocument();
   });
 
   it("marks the selected page's nav item active", () => {
@@ -256,7 +218,7 @@ describe("getBreadcrumb", () => {
   });
 
   it("resolves a nested child page to its parent section", () => {
-    expect(getBreadcrumb("search-tools")).toEqual({ section: "AI Gateway", title: "Search Tools" });
+    expect(getBreadcrumb("router-settings")).toEqual({ section: "Settings", title: "Router Settings" });
   });
 
   it("falls back to a prettified title with no section for unknown pages", () => {

@@ -16,13 +16,13 @@ describe("CommunityEngagementButtons", () => {
 
   it("should render", () => {
     renderWithProviders(<CommunityEngagementButtons />);
-    expect(screen.getByRole("link", { name: /join slack/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /litellm upstream support/i })).toBeInTheDocument();
   });
 
   it("should render Join Slack button with correct link", () => {
     renderWithProviders(<CommunityEngagementButtons />);
 
-    const joinSlackLink = screen.getByRole("link", { name: /join slack/i });
+    const joinSlackLink = screen.getByRole("link", { name: /litellm upstream support/i });
     expect(joinSlackLink).toBeInTheDocument();
     expect(joinSlackLink).toHaveAttribute("href", "https://www.litellm.ai/support");
     expect(joinSlackLink).toHaveAttribute("target", "_blank");
@@ -32,9 +32,9 @@ describe("CommunityEngagementButtons", () => {
   it("should render GitHub link with correct href", () => {
     renderWithProviders(<CommunityEngagementButtons />);
 
-    const githubLink = screen.getByRole("link", { name: /litellm on github/i });
+    const githubLink = screen.getByRole("link", { name: /xhub source on github/i });
     expect(githubLink).toBeInTheDocument();
-    expect(githubLink).toHaveAttribute("href", "https://github.com/BerriAI/litellm");
+    expect(githubLink).toHaveAttribute("href", "https://github.com/adam-qin/litellm");
     expect(githubLink).toHaveAttribute("target", "_blank");
     expect(githubLink).toHaveAttribute("rel", "noopener noreferrer");
   });
@@ -44,7 +44,7 @@ describe("CommunityEngagementButtons", () => {
 
     renderWithProviders(<CommunityEngagementButtons />);
 
-    expect(screen.queryByRole("link", { name: /join slack/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /litellm on github/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /litellm upstream support/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /xhub source on github/i })).not.toBeInTheDocument();
   });
 });
