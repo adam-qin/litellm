@@ -1,4 +1,4 @@
-import { useAuthorized } from "@/app/(dashboard)/hooks/useAuthorized";
+import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { getLDAPSettings, updateLDAPSettings } from "@/components/networking";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { screen, waitFor } from "@testing-library/react";
@@ -8,7 +8,7 @@ import { renderWithProviders } from "../../../../../tests/test-utils";
 import LDAPSettings from "./LDAPSettings";
 
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
-  useAuthorized: vi.fn(),
+  default: vi.fn(),
 }));
 
 vi.mock("@/components/networking", () => ({

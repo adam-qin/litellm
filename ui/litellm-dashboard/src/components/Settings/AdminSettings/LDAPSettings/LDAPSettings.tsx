@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuthorized } from "@/app/(dashboard)/hooks/useAuthorized";
+import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { getLDAPSettings, updateLDAPSettings } from "@/components/networking";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { Button, Card, Form, Input, Switch, Typography } from "antd";
