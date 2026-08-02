@@ -48,6 +48,7 @@ def _make_mock_ldap3(entries, *, user_bind_raises=None):
     for the user bind to simulate invalid credentials.
     """
     mock_ldap3 = MagicMock()
+    mock_ldap3.escape_filter_chars.side_effect = lambda value: value.replace("*", r"\2a").replace("(", r"\28").replace(")", r"\29")
     server = MagicMock()
     mock_ldap3.Server.return_value = server
 
@@ -115,7 +116,10 @@ def test_authenticate_with_ldap_success():
     with patch.dict(sys.modules, {"ldap3": mock_ldap3}):
         result = asyncio.run(authenticate_with_ldap("alice", "secret", cfg))
 
-    assert result == {"user_id": "alice@example.com", "user_email": "alice@example.com"}
+    assert result is not None
+    assert result["user_email"] == "alice@example.com"
+    assert result["external_subject"] == "uid=alice,dc=example,dc=com"
+    assert result["user_id"].startswith("ldap:")
     mock_ldap3.Server.assert_called_once()
     # The second Connection binds as the resolved user DN with the password.
     mock_ldap3.Connection.assert_called_with(

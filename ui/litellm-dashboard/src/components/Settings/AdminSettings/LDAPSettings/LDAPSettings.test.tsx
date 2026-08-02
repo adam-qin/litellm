@@ -64,7 +64,7 @@ describe("LDAPSettings", () => {
     const user = userEvent.setup();
     renderWithProviders(<LDAPSettings />);
 
-    const switchElement = screen.getByRole("switch");
+    const switchElement = screen.getByRole("switch", { name: "启用 LDAP 登录" });
     expect(switchElement).not.toBeChecked();
 
     await user.click(switchElement);
@@ -88,7 +88,7 @@ describe("LDAPSettings", () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText("ldaps://ldap.example.com:636")).toHaveValue("ldaps://corp.example.com:636");
     });
-    expect(screen.getByRole("switch")).toBeChecked();
+    expect(screen.getByRole("switch", { name: "启用 LDAP 登录" })).toBeChecked();
   });
 
   it("saves the form and shows a success notification", async () => {
@@ -97,7 +97,10 @@ describe("LDAPSettings", () => {
 
     renderWithProviders(<LDAPSettings />);
 
-    await user.type(screen.getByPlaceholderText("ldaps://ldap.example.com:636"), "ldaps://x");
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("ldaps://ldap.example.com:636")).not.toBeDisabled();
+    });
+    await user.type(screen.getByPlaceholderText("ldaps://ldap.example.com:636"), "ldaps://x.example.com");
     await user.type(screen.getByPlaceholderText("dc=example,dc=com"), "dc=x");
 
     await user.click(screen.getByRole("button", { name: "保存设置" }));
@@ -106,7 +109,7 @@ describe("LDAPSettings", () => {
       expect(mockUpdateLDAPSettings).toHaveBeenCalledWith(
         "test-token",
         expect.objectContaining({
-          server_url: "ldaps://x",
+          server_url: "ldaps://x.example.com",
           user_search_base: "dc=x",
         }),
       );
@@ -120,7 +123,10 @@ describe("LDAPSettings", () => {
 
     renderWithProviders(<LDAPSettings />);
 
-    await user.type(screen.getByPlaceholderText("ldaps://ldap.example.com:636"), "ldaps://x");
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("ldaps://ldap.example.com:636")).not.toBeDisabled();
+    });
+    await user.type(screen.getByPlaceholderText("ldaps://ldap.example.com:636"), "ldaps://x.example.com");
     await user.type(screen.getByPlaceholderText("dc=example,dc=com"), "dc=x");
 
     await user.click(screen.getByRole("button", { name: "保存设置" }));

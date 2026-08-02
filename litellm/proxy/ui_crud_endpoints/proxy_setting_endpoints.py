@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
-from pydantic import ConfigDict, ValidationError, create_model
+from pydantic import ConfigDict, Field, ValidationError, create_model
 from pydantic.fields import FieldInfo
 
 import litellm
@@ -39,6 +39,25 @@ _SSO_SENSITIVE_FIELDS: Set[str] = {
 
 # LDAP bind password is masked on read, matching the SSO secret contract.
 _LDAP_SENSITIVE_FIELDS: Set[str] = {"bind_password"}
+_LDAP_SECRET_MASK = "********"
+
+
+class LDAPSettingsPatch(BaseModel):
+    """Partial LDAP update; omitted fields retain their persisted values."""
+
+    enabled: Optional[bool] = None
+    server_url: Optional[str] = None
+    bind_dn: Optional[str] = None
+    bind_password: Optional[str] = None
+    user_search_base: Optional[str] = None
+    user_search_filter: Optional[str] = None
+    user_email_attribute: Optional[str] = None
+    default_user_role: Optional[str] = None
+    use_ssl: Optional[bool] = None
+    start_tls: Optional[bool] = None
+    ca_cert_file: Optional[str] = None
+    connect_timeout: Optional[float] = Field(default=None, gt=0, le=60)
+    receive_timeout: Optional[float] = Field(default=None, gt=0, le=120)
 
 
 class IPAddress(BaseModel):
@@ -988,12 +1007,18 @@ async def get_ldap_settings():
 
     ldap_settings_dict: Dict[str, Any] = {}
     if record and record.ldap_settings:
-        ldap_settings_dict = dict(record.ldap_settings)
+        stored = record.ldap_settings
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        if isinstance(stored, dict):
+            ldap_settings_dict = stored
 
-    decrypted = proxy_config._decrypt_and_set_db_env_variables(environment_variables=ldap_settings_dict)
+    decrypted = proxy_config._decrypt_db_variables(ldap_settings_dict) if ldap_settings_dict else {}
     cfg = LDAPSettings(**decrypted) if decrypted else LDAPSettings()
 
-    ldap_dict = mask_sensitive_keys(cfg.model_dump(), _LDAP_SENSITIVE_FIELDS)
+    ldap_dict = cfg.model_dump()
+    if ldap_dict.get("bind_password"):
+        ldap_dict["bind_password"] = _LDAP_SECRET_MASK
     schema = TypeAdapter(LDAPSettings).json_schema(by_alias=True)
     result = {
         "values": ldap_dict,
@@ -1013,7 +1038,7 @@ async def get_ldap_settings():
     dependencies=[Depends(user_api_key_auth)],
 )
 async def update_ldap_settings(
-    ldap_config: LDAPSettings,
+    ldap_config: LDAPSettingsPatch,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
     """
@@ -1040,21 +1065,33 @@ async def update_ldap_settings(
 
     existing = await LDAPConfigRepository(prisma_client).table.find_unique(where={"id": "ldap_config"})
     before_data: Optional[Dict[str, Any]] = None
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+        raise HTTPException(status_code=403, detail="Only proxy admins can update LDAP settings.")
+
+    stored_data: Dict[str, Any] = {}
     if existing and existing.ldap_settings:
         stored = existing.ldap_settings
         if isinstance(stored, str):
             stored = json.loads(stored)
         if isinstance(stored, dict):
-            before_data = proxy_config._decrypt_db_variables(stored)
+            stored_data = proxy_config._decrypt_db_variables(stored)
+            before_data = dict(stored_data)
 
-    ldap_data = ldap_config.model_dump()
+    patch_data = ldap_config.model_dump(exclude_unset=True)
+    if patch_data.get("bind_password") == _LDAP_SECRET_MASK:
+        patch_data.pop("bind_password")
+    merged_data = {**LDAPSettings().model_dump(), **stored_data, **patch_data}
+    if merged_data.get("default_user_role") != "internal_user":
+        raise HTTPException(status_code=422, detail="LDAP users must use the internal_user role.")
+    validated = LDAPSettings(**merged_data)
+    ldap_data = validated.model_dump()
     encrypted = proxy_config._encrypt_env_variables(environment_variables=ldap_data)
 
     await LDAPConfigRepository(prisma_client).table.upsert(
         where={"id": "ldap_config"},
         data={
-            "create": {"id": "ldap_config", "ldap_settings": json.dumps(encrypted)},
-            "update": {"ldap_settings": json.dumps(encrypted)},
+            "create": {"id": "ldap_config", "ldap_settings": encrypted},
+            "update": {"ldap_settings": encrypted},
         },
     )
 
@@ -1069,10 +1106,13 @@ async def update_ldap_settings(
         )
     )
 
+    response_settings = dict(ldap_data)
+    if response_settings.get("bind_password"):
+        response_settings["bind_password"] = _LDAP_SECRET_MASK
     return {
         "message": "LDAP settings updated successfully",
         "status": "success",
-        "settings": ldap_data,
+        "settings": response_settings,
     }
 
 

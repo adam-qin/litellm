@@ -158,10 +158,27 @@ async def authenticate_user(
             ),
         )
 
-    # LDAP backend: when the user is not in the DB, fall back to LDAP bind
-    # auth. Successful LDAP users are provisioned as internal_user.
+    # LDAP authentication is only available for users that are either not yet
+    # provisioned or are explicitly marked as LDAP users. A local account with
+    # the same email must never be bypassed by an LDAP password.
+    def _is_ldap_user(user_row: Optional[LiteLLM_UserTable]) -> bool:
+        if user_row is None:
+            return False
+        sso_user_id = getattr(user_row, "sso_user_id", None)
+        if isinstance(sso_user_id, str) and sso_user_id.startswith("ldap:"):
+            return True
+        metadata = getattr(user_row, "metadata", None)
+        if isinstance(metadata, str):
+            try:
+                import json
+
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = None
+        return isinstance(metadata, dict) and metadata.get("auth_provider") == "ldap"
+
     is_ldap_authenticated = False
-    if _user_row is None and prisma_client is not None:
+    if prisma_client is not None and (_user_row is None or _is_ldap_user(_user_row)):
         try:
             from litellm._logging import verbose_proxy_logger
             from litellm.proxy.auth.ldap_auth import (
@@ -175,7 +192,7 @@ async def authenticate_user(
                 ldap_user = await authenticate_with_ldap(username, password, ldap_cfg)
                 if ldap_user is not None:
                     _user_row = await ensure_internal_user_for_ldap(username, ldap_user, prisma_client)
-                    is_ldap_authenticated = True
+                    is_ldap_authenticated = _user_row is not None
         except Exception as e:  # noqa: BLE001
             verbose_proxy_logger.debug(f"LDAP login fallback failed for {username}: {e}")
 
