@@ -1115,6 +1115,14 @@ model LiteLLM_SSOConfig {
   updated_at DateTime @updatedAt
 }
 
+// LDAP configuration table
+model LiteLLM_LDAPConfig {
+  id String @id @default("ldap_config")
+  ldap_settings Json
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
 model LiteLLM_ManagedVectorStoreIndexTable {
   id String @id @default(uuid())
   index_name String @unique

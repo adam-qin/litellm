@@ -6403,6 +6403,58 @@ export const updateSSOSettings = async (accessToken: string, settings: Record<st
   }
 };
 
+export const getLDAPSettings = async (accessToken: string) => {
+  try {
+    const data = await apiClient.get(`/get/ldap_settings`, { accessToken });
+    return data;
+  } catch (error) {
+    console.error("Failed to fetch LDAP configuration:", error);
+    throw error;
+  }
+};
+
+export const updateLDAPSettings = async (accessToken: string, settings: Record<string, any>) => {
+  try {
+    // Construct base URL
+    let url = proxyBaseUrl ? `${proxyBaseUrl}/update/ldap_settings` : `/update/ldap_settings`;
+
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        [globalLitellmHeaderName]: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(settings),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      const detailMessage =
+        typeof errorData?.detail === "object"
+          ? errorData.detail?.error || errorData.detail?.message
+          : errorData?.detail;
+      const errorMessage =
+        typeof detailMessage === "string" && detailMessage.length > 0 ? detailMessage : deriveErrorMessage(errorData);
+
+      handleError(errorMessage);
+
+      const enhancedError = new Error(errorMessage);
+      if (errorData?.detail !== undefined) {
+        (enhancedError as any).detail = errorData.detail;
+      }
+      (enhancedError as any).rawError = errorData;
+
+      throw enhancedError;
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Failed to update LDAP configuration:", error);
+    throw error;
+  }
+};
+
 interface UiAuditLogsParams {
   action?: string;
   table_name?: string;

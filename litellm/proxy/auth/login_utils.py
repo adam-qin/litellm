@@ -41,7 +41,8 @@ from litellm.types.proxy.ui_sso import ReturnedUITokenObject
 
 async def _rehash_password_if_needed(user_id: str, password: str, stored: str) -> None:
     """Rehash legacy password (SHA256) to scrypt on successful login."""
-    if stored.startswith("scrypt:"):
+    # LDAP-provisioned users have no stored password yet; nothing to rehash.
+    if not stored or stored.startswith("scrypt:"):
         return
     from litellm.proxy.proxy_server import prisma_client
 
@@ -157,6 +158,27 @@ async def authenticate_user(
             ),
         )
 
+    # LDAP backend: when the user is not in the DB, fall back to LDAP bind
+    # auth. Successful LDAP users are provisioned as internal_user.
+    is_ldap_authenticated = False
+    if _user_row is None and prisma_client is not None:
+        try:
+            from litellm._logging import verbose_proxy_logger
+            from litellm.proxy.auth.ldap_auth import (
+                authenticate_with_ldap,
+                ensure_internal_user_for_ldap,
+                get_ldap_config,
+            )
+
+            ldap_cfg = await get_ldap_config(prisma_client)
+            if ldap_cfg is not None:
+                ldap_user = await authenticate_with_ldap(username, password, ldap_cfg)
+                if ldap_user is not None:
+                    _user_row = await ensure_internal_user_for_ldap(username, ldap_user, prisma_client)
+                    is_ldap_authenticated = True
+        except Exception as e:  # noqa: BLE001
+            verbose_proxy_logger.debug(f"LDAP login fallback failed for {username}: {e}")
+
     """
     To login to Admin UI, we support the following
     - Login with UI_USERNAME and UI_PASSWORD
@@ -255,7 +277,7 @@ async def authenticate_user(
         user_email = getattr(_user_row, "user_email", "unknown")
         _password = getattr(_user_row, "password", "unknown")
 
-        if _password is None:
+        if _password is None and not is_ldap_authenticated:
             raise ProxyException(
                 message="User has no password set. Please set a password for the user via `/user/update`.",
                 type=ProxyErrorTypes.auth_error,
@@ -263,7 +285,7 @@ async def authenticate_user(
                 code=401,
             )
 
-        if verify_password(password, _password):
+        if is_ldap_authenticated or verify_password(password, _password):
             await _rehash_password_if_needed(_user_row.user_id, password, _password)
             if os.getenv("DATABASE_URL") is not None:
                 response = await generate_key_helper_fn(

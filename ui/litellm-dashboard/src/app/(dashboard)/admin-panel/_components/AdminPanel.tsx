@@ -21,6 +21,7 @@ import { useBaseUrl } from "@/components/constants";
 import NotificationsManager from "@/components/molecules/notifications_manager";
 import { addAllowedIP, deleteAllowedIP, getAllowedIPs, getSSOSettings } from "@/components/networking";
 import SCIMConfig from "@/components/SCIM";
+import LDAPSettings from "@/components/Settings/AdminSettings/LDAPSettings/LDAPSettings";
 import LoggingSettings from "@/components/Settings/AdminSettings/LoggingSettings/LoggingSettings";
 import SSOSettings from "@/components/Settings/AdminSettings/SSOSettings/SSOSettings";
 import UISettings from "@/components/Settings/AdminSettings/UISettings/UISettings";
@@ -236,6 +237,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ proxySettings }) => {
               </div>
             </div>
           </Card>
+
+          <LDAPSettings />
 
           <div className="flex justify-start mb-4">
             <SSOModals

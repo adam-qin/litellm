@@ -137,6 +137,10 @@ class SSOConfigRepository(PrismaTableRepository):
     table_name = "litellm_ssoconfig"
 
 
+class LDAPConfigRepository(PrismaTableRepository):
+    table_name = "litellm_ldapconfig"
+
+
 class UISettingsRepository(PrismaTableRepository):
     table_name = "litellm_uisettings"
 

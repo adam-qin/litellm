@@ -192,6 +192,7 @@ class LitellmTableNames(str, enum.Enum):
     CONFIG_OVERRIDES_TABLE_NAME = "LiteLLM_ConfigOverrides"
     CONFIG_TABLE_NAME = "LiteLLM_Config"
     SSO_CONFIG_TABLE_NAME = "LiteLLM_SSOConfig"
+    LDAP_CONFIG_TABLE_NAME = "LiteLLM_LDAPConfig"
     UI_SETTINGS_TABLE_NAME = "LiteLLM_UISettings"
 
 
