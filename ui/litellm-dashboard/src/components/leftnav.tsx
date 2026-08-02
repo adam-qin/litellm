@@ -84,55 +84,55 @@ interface MenuGroup {
 // icons changed to lucide as part of the sidebar redesign.
 const menuGroups: MenuGroup[] = [
   {
-    groupLabel: "AI GATEWAY",
+    groupLabel: "模型网关",
     items: [
-      { key: "api-keys", page: "api-keys", label: "Virtual Keys", icon: <KeyRound {...ICON} /> },
+      { key: "api-keys", page: "api-keys", label: "虚拟密钥", icon: <KeyRound {...ICON} /> },
       {
         key: "llm-playground",
         page: "llm-playground",
-        label: "Playground",
+        label: "模型调试",
         icon: <PlayCircle {...ICON} />,
         roles: rolesWithWriteAccess,
       },
       {
         key: "models",
         page: "models",
-        label: "Models + Endpoints",
+        label: "模型与端点",
         icon: <Network {...ICON} />,
         roles: rolesAllowedToViewWriteScopedPages,
       },
     ],
   },
   {
-    groupLabel: "OBSERVABILITY",
+    groupLabel: "可观测性",
     items: [
       {
         key: "new_usage",
         page: "new_usage",
         icon: <BarChart3 {...ICON} />,
         roles: [...all_admin_roles, ...internalUserRoles],
-        label: "Usage",
+        label: "用量分析",
       },
-      { key: "logs", page: "logs", label: "Logs", icon: <Activity {...ICON} /> },
+      { key: "logs", page: "logs", label: "日志", icon: <Activity {...ICON} /> },
     ],
   },
   {
-    groupLabel: "ACCESS CONTROL",
+    groupLabel: "访问控制",
     items: [
-      { key: "teams", page: "teams", label: "Teams", icon: <Users {...ICON} /> },
-      { key: "users", page: "users", label: "Internal Users", icon: <User {...ICON} />, roles: all_admin_roles },
+      { key: "teams", page: "teams", label: "团队", icon: <Users {...ICON} /> },
+      { key: "users", page: "users", label: "内部用户", icon: <User {...ICON} />, roles: all_admin_roles },
       {
         key: "access-groups",
         page: "access-groups",
-        label: "Access Groups",
+        label: "访问组",
         icon: <Boxes {...ICON} />,
         roles: all_admin_roles,
       },
-      { key: "budgets", page: "budgets", label: "Budgets", icon: <Wallet {...ICON} />, roles: all_admin_roles },
+      { key: "budgets", page: "budgets", label: "预算", icon: <Wallet {...ICON} />, roles: all_admin_roles },
     ],
   },
   {
-    groupLabel: "SETTINGS",
+    groupLabel: "系统设置",
     roles: all_admin_roles,
     items: [
       {
@@ -140,7 +140,7 @@ const menuGroups: MenuGroup[] = [
         page: "settings",
         label: (
           <span className="flex items-center gap-2">
-            Settings <NewBadge />
+            系统设置 <NewBadge />
           </span>
         ),
         icon: <SettingsIcon {...ICON} />,
@@ -149,14 +149,14 @@ const menuGroups: MenuGroup[] = [
           {
             key: "router-settings",
             page: "router-settings",
-            label: "Router Settings",
+            label: "路由设置",
             icon: <Route {...ICON} />,
             roles: all_admin_roles,
           },
           {
             key: "logging-and-alerts",
             page: "logging-and-alerts",
-            label: "Logging & Alerts",
+            label: "日志与告警",
             icon: <Bell {...ICON} />,
             roles: all_admin_roles,
           },
@@ -165,7 +165,7 @@ const menuGroups: MenuGroup[] = [
             page: "admin-panel",
             label: (
               <span className="flex items-center gap-2">
-                Admin Settings{" "}
+                管理设置{" "}
                 <NewBadge dot>
                   <span />
                 </NewBadge>
@@ -177,11 +177,11 @@ const menuGroups: MenuGroup[] = [
           {
             key: "cost-tracking",
             page: "cost-tracking",
-            label: "Cost Tracking",
+            label: "成本追踪",
             icon: <BarChart3 {...ICON} />,
             roles: all_admin_roles,
           },
-          { key: "ui-theme", page: "ui-theme", label: "UI Theme", icon: <Palette {...ICON} />, roles: all_admin_roles },
+          { key: "ui-theme", page: "ui-theme", label: "界面主题", icon: <Palette {...ICON} />, roles: all_admin_roles },
         ],
       },
     ],
@@ -211,10 +211,10 @@ const findMenuItemKey = (page: string): string => {
 const labelText = (item: MenuItem): string => (typeof item.label === "string" ? item.label : item.key);
 
 const SECTION_DISPLAY: Record<string, string> = {
-  "AI GATEWAY": "AI Gateway",
-  OBSERVABILITY: "Observability",
-  "ACCESS CONTROL": "Access Control",
-  SETTINGS: "Settings",
+  模型网关: "模型网关",
+  可观测性: "可观测性",
+  访问控制: "访问控制",
+  系统设置: "系统设置",
 };
 
 const prettify = (key: string): string =>

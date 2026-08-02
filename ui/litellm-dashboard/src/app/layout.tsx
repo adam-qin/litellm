@@ -1,16 +1,14 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 
 import AntdGlobalProvider from "@/contexts/AntdGlobalProvider";
+import ChineseLocaleProvider from "@/contexts/ChineseLocaleProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ReactQueryProvider from "@/contexts/ReactQueryProvider";
 
-const inter = Inter({ subsets: ["latin"] });
-
 export const metadata: Metadata = {
-  title: "XHub Dashboard",
-  description: "XHub Proxy Admin UI",
+  title: "XHub 管理控制台",
+  description: "XHub 模型网关管理界面",
   icons: { icon: "/get_favicon" },
 };
 
@@ -20,11 +18,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="zh-CN">
+      <body className="font-sans">
         <ReactQueryProvider>
           <AntdGlobalProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <ChineseLocaleProvider>
+              <AuthProvider>{children}</AuthProvider>
+            </ChineseLocaleProvider>
           </AntdGlobalProvider>
         </ReactQueryProvider>
       </body>

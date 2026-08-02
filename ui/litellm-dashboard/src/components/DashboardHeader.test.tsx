@@ -37,8 +37,8 @@ describe("DashboardHeader breadcrumb", () => {
     state.enableChatUI = true;
     render(<DashboardHeader page="logs" />);
 
-    expect(screen.getByText("Logs")).toBeInTheDocument();
-    expect(screen.queryByText("Observability")).not.toBeInTheDocument();
+    expect(screen.getByText("日志")).toBeInTheDocument();
+    expect(screen.queryByText("可观测性")).not.toBeInTheDocument();
 
     const selector = screen.getByRole("button", { name: /AI Gateway/i });
     act(() => {
@@ -51,7 +51,7 @@ describe("DashboardHeader breadcrumb", () => {
     render(<DashboardHeader page="logs" />);
 
     expect(screen.getByRole("button", { name: /AI Gateway/i })).toBeInTheDocument();
-    expect(screen.getByText("Logs")).toBeInTheDocument();
-    expect(screen.queryByText("Observability")).not.toBeInTheDocument();
+    expect(screen.getByText("日志")).toBeInTheDocument();
+    expect(screen.queryByText("可观测性")).not.toBeInTheDocument();
   });
 });

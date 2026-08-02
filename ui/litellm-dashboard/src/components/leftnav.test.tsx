@@ -70,16 +70,16 @@ describe("Sidebar (leftnav)", () => {
     renderWithProviders(<Sidebar {...defaultProps} />);
 
     const topLevelLabels = [
-      "Virtual Keys",
-      "Playground",
-      "Models + Endpoints",
-      "Usage",
-      "Logs",
-      "Teams",
-      "Internal Users",
-      "Access Groups",
-      "Budgets",
-      "Settings",
+      "虚拟密钥",
+      "模型调试",
+      "模型与端点",
+      "用量分析",
+      "日志",
+      "团队",
+      "内部用户",
+      "访问组",
+      "预算",
+      "系统设置",
     ];
 
     topLevelLabels.forEach((label) => {
@@ -134,19 +134,19 @@ describe("Sidebar (leftnav)", () => {
     it("hides Playground from Admin Viewer (cost-incurring action)", () => {
       mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
       renderWithProviders(<Sidebar {...defaultProps} />);
-      expect(screen.queryByText("Playground")).not.toBeInTheDocument();
+      expect(screen.queryByText("模型调试")).not.toBeInTheDocument();
     });
 
     it("shows Models + Endpoints to Admin Viewer (read-only)", () => {
       mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
       renderWithProviders(<Sidebar {...defaultProps} />);
-      expect(screen.getByText("Models + Endpoints")).toBeInTheDocument();
+      expect(screen.getByText("模型与端点")).toBeInTheDocument();
     });
 
     it("shows Logs to Admin Viewer", () => {
       mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
       renderWithProviders(<Sidebar {...defaultProps} />);
-      expect(screen.getByText("Logs")).toBeInTheDocument();
+      expect(screen.getByText("日志")).toBeInTheDocument();
     });
   });
 
@@ -186,16 +186,16 @@ describe("Sidebar (leftnav)", () => {
 
     renderWithProviders(<Sidebar {...defaultProps} />);
 
-    expect(screen.getByText("Internal Users")).toBeInTheDocument();
+    expect(screen.getByText("内部用户")).toBeInTheDocument();
     expect(screen.queryByText("Organizations")).not.toBeInTheDocument();
   });
 
   it("marks the selected page's nav item active", () => {
     renderWithProviders(<Sidebar {...defaultProps} defaultSelectedKey="logs" />);
-    const logs = screen.getByText("Logs").closest("a");
+    const logs = screen.getByText("日志").closest("a");
     expect(logs).toHaveAttribute("data-active", "true");
     // A different item must not be active.
-    expect(screen.getByText("Virtual Keys").closest("a")).not.toHaveAttribute("data-active");
+    expect(screen.getByText("虚拟密钥").closest("a")).not.toHaveAttribute("data-active");
   });
 
   it("hides labels but keeps items reachable (icon + link) when collapsed to the rail", () => {
@@ -204,7 +204,7 @@ describe("Sidebar (leftnav)", () => {
     // The item stays navigable in the icon-only rail: its link still renders with
     // an icon (asserting the <a> + svg, not the text, so a removed icon would
     // fail here), while the label is present but CSS-hidden.
-    const label = screen.getByText("Virtual Keys");
+    const label = screen.getByText("虚拟密钥");
     const link = label.closest("a");
     expect(link).not.toBeNull();
     expect(link!.querySelector("svg")).not.toBeNull();
@@ -214,12 +214,12 @@ describe("Sidebar (leftnav)", () => {
 
 describe("getBreadcrumb", () => {
   it("resolves a top-level page to its section + title", () => {
-    expect(getBreadcrumb("api-keys")).toEqual({ section: "AI Gateway", title: "Virtual Keys" });
-    expect(getBreadcrumb("logs")).toEqual({ section: "Observability", title: "Logs" });
+    expect(getBreadcrumb("api-keys")).toEqual({ section: "模型网关", title: "虚拟密钥" });
+    expect(getBreadcrumb("logs")).toEqual({ section: "可观测性", title: "日志" });
   });
 
   it("resolves a nested child page to its parent section", () => {
-    expect(getBreadcrumb("router-settings")).toEqual({ section: "Settings", title: "Router Settings" });
+    expect(getBreadcrumb("router-settings")).toEqual({ section: "系统设置", title: "路由设置" });
   });
 
   it("falls back to a prettified title with no section for unknown pages", () => {
