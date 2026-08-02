@@ -2,31 +2,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "../../../../tests/test-utils";
 import { CommunityEngagementButtons } from "./CommunityEngagementButtons";
 
-let mockUseDisableShowPromptsImpl = () => false;
+const mockUseDisableShowPrompts = vi.fn(() => false);
 
 vi.mock("@/app/(dashboard)/hooks/useDisableShowPrompts", () => ({
-  useDisableShowPrompts: () => mockUseDisableShowPromptsImpl(),
+  useDisableShowPrompts: () => mockUseDisableShowPrompts(),
 }));
 
 describe("CommunityEngagementButtons", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseDisableShowPromptsImpl = () => false;
+    mockUseDisableShowPrompts.mockReturnValue(false);
   });
 
-  it("should render", () => {
-    renderWithProviders(<CommunityEngagementButtons />);
-    expect(screen.getByRole("link", { name: /litellm upstream support/i })).toBeInTheDocument();
-  });
-
-  it("should render Join Slack button with correct link", () => {
+  it("should render the XHub GitHub link", () => {
     renderWithProviders(<CommunityEngagementButtons />);
 
-    const joinSlackLink = screen.getByRole("link", { name: /litellm upstream support/i });
-    expect(joinSlackLink).toBeInTheDocument();
-    expect(joinSlackLink).toHaveAttribute("href", "https://www.litellm.ai/support");
-    expect(joinSlackLink).toHaveAttribute("target", "_blank");
-    expect(joinSlackLink).toHaveAttribute("rel", "noopener noreferrer");
+    const githubLink = screen.getByRole("link", { name: /xhub source on github/i });
+    expect(githubLink).toBeInTheDocument();
+    expect(githubLink).toHaveAttribute("href", "https://github.com/adam-qin/litellm");
+    expect(githubLink).toHaveAttribute("target", "_blank");
+    expect(githubLink).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("should render GitHub link with correct href", () => {
@@ -40,11 +35,10 @@ describe("CommunityEngagementButtons", () => {
   });
 
   it("should not render buttons when prompts are disabled", () => {
-    mockUseDisableShowPromptsImpl = () => true;
+    mockUseDisableShowPrompts.mockReturnValue(true);
 
     renderWithProviders(<CommunityEngagementButtons />);
 
-    expect(screen.queryByRole("link", { name: /litellm upstream support/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /xhub source on github/i })).not.toBeInTheDocument();
   });
 });

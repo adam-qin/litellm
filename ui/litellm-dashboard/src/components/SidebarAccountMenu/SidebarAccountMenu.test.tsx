@@ -143,15 +143,14 @@ describe("SidebarAccountMenu", () => {
     expect(screen.getByText("Premium")).toBeInTheDocument();
   });
 
-  it("should render a clickable version badge linking to the release notes", async () => {
+  it("should render a non-clickable version badge", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SidebarAccountMenu onLogout={mockOnLogout} />);
 
     await openMenu(user);
 
-    const versionLink = screen.getByRole("link", { name: /v1\.99\.0/ });
-    expect(versionLink).toHaveAttribute("href", "https://docs.litellm.ai/release_notes");
-    expect(versionLink).toHaveAttribute("target", "_blank");
+    expect(screen.getByText("v1.99.0")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /v1\.99\.0/ })).not.toBeInTheDocument();
   });
 
   it("should not render the version badge when the version is unavailable", async () => {

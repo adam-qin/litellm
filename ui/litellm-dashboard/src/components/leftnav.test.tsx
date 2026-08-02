@@ -83,7 +83,7 @@ describe("Sidebar (leftnav)", () => {
     ];
 
     topLevelLabels.forEach((label) => {
-      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     });
   });
 

@@ -7,7 +7,7 @@ import { exchangeLoginCode, getProxyBaseUrl, switchToWorkerUrl } from "@/compone
 import { clearTokenCookies, getCookieFromDocument } from "@/utils/cookieUtils";
 import { isJwtExpired } from "@/utils/jwtUtils";
 import { consumeReturnUrl, getReturnUrl, isValidReturnUrl } from "@/utils/returnUrlUtils";
-import { InfoCircleOutlined, CloudServerOutlined } from "@ant-design/icons";
+import { CloudServerOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Form, Input, Popover, Select, Space, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -195,31 +195,6 @@ function LoginPageContent() {
             <Title level={3}>Login</Title>
             <Text type="secondary">Access your XHub Admin UI.</Text>
           </div>
-
-          {!uiConfig?.hide_default_credentials_hint && (
-            <Alert
-              message="Default Credentials"
-              description={
-                <>
-                  <Paragraph className="text-sm">
-                    By default, Username is <code className="bg-gray-100 px-1 py-0.5 rounded-sm text-xs">admin</code>{" "}
-                    and Password is your set XHub Proxy
-                    <code className="bg-gray-100 px-1 py-0.5 rounded-sm text-xs">MASTER_KEY</code>.
-                  </Paragraph>
-                  <Paragraph className="text-sm">
-                    Need to set UI credentials or SSO?{" "}
-                    <a href="https://docs.litellm.ai/docs/proxy/ui" target="_blank" rel="noopener noreferrer">
-                      Check the documentation
-                    </a>
-                    .
-                  </Paragraph>
-                </>
-              }
-              type="info"
-              icon={<InfoCircleOutlined />}
-              showIcon
-            />
-          )}
 
           {error && <Alert message={error} type="error" showIcon />}
 

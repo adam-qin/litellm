@@ -401,7 +401,6 @@ const Sidebar_: React.FC<SidebarProps> = ({
             {version && (
               <Badge
                 variant="outline"
-                render={<a href="https://docs.litellm.ai/release_notes" target="_blank" rel="noopener noreferrer" />}
                 className="px-1.5 py-0 font-mono text-[10px] font-medium text-muted-foreground group-data-[collapsed=true]/sidebar:hidden"
               >
                 v{version}

@@ -7,13 +7,11 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { clearTokenCookies } from "@/utils/cookieUtils";
 import { clearStoredReturnUrl } from "@/utils/returnUrlUtils";
 import useProxySettings from "@/app/(dashboard)/hooks/proxySettings/useProxySettings";
-import { DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
+import { MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
 import { Tag } from "antd";
 import Link from "next/link";
 import React from "react";
-import { BlogDropdown } from "./Navbar/BlogDropdown/BlogDropdown";
 import { CommunityEngagementButtons } from "./Navbar/CommunityEngagementButtons/CommunityEngagementButtons";
-import { NAV_PRODUCT_LINK_CLASS } from "./Navbar/navProductLinkClass";
 import { NotificationsBell } from "./Navbar/NotificationsBell/NotificationsBell";
 import UserDropdown from "./Navbar/UserDropdown/UserDropdown";
 import ViewSwitcher from "./Navbar/ViewSwitcher";
@@ -97,16 +95,7 @@ const Navbar: React.FC<NavbarProps> = ({
                       🌑
                     </span>
                   )}
-                  <Tag className="relative z-10 cursor-pointer text-xs font-medium">
-                    <a
-                      href="https://docs.litellm.ai/release_notes"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0"
-                    >
-                      v{version}
-                    </a>
-                  </Tag>
+                  <Tag className="relative z-10 cursor-pointer text-xs font-medium">v{version}</Tag>
                 </div>
               )}
             </div>
@@ -124,23 +113,6 @@ const Navbar: React.FC<NavbarProps> = ({
                 <WorkerDropdown onWorkerSwitch={handleWorkerSwitch} />
               </div>
             )}
-
-            <nav
-              aria-label="Product documentation"
-              className={`flex min-w-0 items-center gap-2 ${showWorkerSwitch ? "border-l border-gray-200 pl-4" : ""}`}
-            >
-              <a
-                href="https://docs.litellm.ai/docs/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={NAV_PRODUCT_LINK_CLASS}
-              >
-                Docs
-                {/* Layout parity with Blog chevron — intentional single-level link */}
-                <DownOutlined className="pointer-events-none text-[10px] opacity-0" aria-hidden />
-              </a>
-              <BlogDropdown />
-            </nav>
 
             {!hideCommunityLinks && (
               <div className="flex shrink-0 items-center border-l border-gray-200 pl-4">

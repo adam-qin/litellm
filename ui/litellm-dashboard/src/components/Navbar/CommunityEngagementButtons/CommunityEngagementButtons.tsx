@@ -1,5 +1,5 @@
 import { useDisableShowPrompts } from "@/app/(dashboard)/hooks/useDisableShowPrompts";
-import { GithubOutlined, SlackOutlined } from "@ant-design/icons";
+import { GithubOutlined } from "@ant-design/icons";
 import { Tooltip } from "antd";
 import React from "react";
 
@@ -18,17 +18,6 @@ export const CommunityEngagementButtons: React.FC = () => {
       className="flex items-center gap-0.5 rounded-md border border-gray-200/80 bg-gray-50 px-0.5 py-0"
       aria-label="Community links"
     >
-      <Tooltip title="LiteLLM upstream support">
-        <a
-          href="https://www.litellm.ai/support"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={iconBtnClass}
-          aria-label="LiteLLM upstream support"
-        >
-          <SlackOutlined className="text-lg" />
-        </a>
-      </Tooltip>
       <Tooltip title="XHub source on GitHub">
         <a
           href="https://github.com/adam-qin/litellm"

@@ -14,10 +14,6 @@ vi.mock("@/app/(dashboard)/hooks/useDisableBouncingIcon", () => ({
   useDisableBouncingIcon: () => false,
 }));
 
-vi.mock("./Navbar/BlogDropdown/BlogDropdown", () => ({
-  BlogDropdown: () => <div data-testid="blog-dropdown">Blog</div>,
-}));
-
 const mockUserDropdownData = vi.hoisted(() => ({
   current: () => ({
     userId: "test-user",
@@ -80,16 +76,7 @@ vi.mock("@/utils/proxyUtils", () => ({
 
 // Mock CommunityEngagementButtons component
 vi.mock("./Navbar/CommunityEngagementButtons/CommunityEngagementButtons", () => ({
-  CommunityEngagementButtons: () => (
-    <div data-testid="community-engagement-buttons">
-      <a href="https://www.litellm.ai/support" target="_blank" rel="noopener noreferrer">
-        Join Slack
-      </a>
-      <a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener noreferrer">
-        Star us on GitHub
-      </a>
-    </div>
-  ),
+  CommunityEngagementButtons: () => <div data-testid="community-engagement-buttons">XHub GitHub</div>,
 }));
 
 // Create mock functions that can be controlled in tests
@@ -148,7 +135,6 @@ describe("Navbar", () => {
     renderWithProviders(<Navbar {...defaultProps} />);
 
     expect(screen.getByRole("button", { name: /^notifications$/i })).toBeInTheDocument();
-    expect(screen.getByText("Docs")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open account menu/i })).toBeInTheDocument();
   });
 

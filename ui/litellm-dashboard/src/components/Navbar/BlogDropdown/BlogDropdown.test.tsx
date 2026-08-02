@@ -200,16 +200,15 @@ describe("BlogDropdown", () => {
         });
       });
 
-      it("should render the 'View all posts' link", async () => {
+      it("should render the 'View all posts' label without an external docs link", async () => {
         renderWithProviders(<BlogDropdown />);
 
         await openDropdown();
 
         await waitFor(() => {
-          const viewAllLink = screen.getByRole("link", { name: /view all posts/i });
-          expect(viewAllLink).toHaveAttribute("href", "https://docs.litellm.ai/blog");
-          expect(viewAllLink).toHaveAttribute("target", "_blank");
-          expect(viewAllLink).toHaveAttribute("rel", "noopener noreferrer");
+          expect(screen.getByText("View all posts")).toBeInTheDocument();
+          expect(screen.queryByRole("link", { name: /view all posts/i })).not.toBeInTheDocument();
+          expect(screen.queryByText(/docs\.litellm\.ai/i)).not.toBeInTheDocument();
         });
       });
     });
