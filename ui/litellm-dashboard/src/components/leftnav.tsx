@@ -33,7 +33,9 @@ import {
   PanelLeftOpen,
   PlayCircle,
   Route,
+  ScrollText,
   Settings as SettingsIcon,
+  ShieldCheck,
   User,
   Users,
   Wallet,
@@ -132,6 +134,13 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
+    groupLabel: "安全合规",
+    items: [
+      { key: "guardrails", page: "guardrails", label: "护栏", icon: <ShieldCheck {...ICON} /> },
+      { key: "policies", page: "policies", label: "策略", icon: <ScrollText {...ICON} /> },
+    ],
+  },
+  {
     groupLabel: "系统设置",
     roles: all_admin_roles,
     items: [
@@ -214,6 +223,7 @@ const SECTION_DISPLAY: Record<string, string> = {
   模型网关: "模型网关",
   可观测性: "可观测性",
   访问控制: "访问控制",
+  安全合规: "安全合规",
   系统设置: "系统设置",
 };
 

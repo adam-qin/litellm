@@ -612,16 +612,7 @@ function DetailPanel({
             <InfoIcon className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
             <p className="text-xs text-gray-500 leading-relaxed">
               This guardrail runs on a separate instance. It receives the user request and forwards the result to the
-              next step in the pipeline. See{" "}
-              <a
-                href="https://docs.litellm.ai/docs/adding_provider/generic_guardrail_api"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:underline"
-              >
-                LiteLLM Generic Guardrail API docs
-              </a>{" "}
-              for configuration details.
+              next step in the pipeline. See LiteLLM Generic Guardrail API docs for configuration details.
             </p>
           </div>
         </div>

@@ -383,14 +383,6 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
                     <li>Group guardrails into a single policy</li>
                     <li>Inherit from existing policies and override what you need</li>
                   </ul>
-                  <a
-                    href="https://docs.litellm.ai/docs/proxy/guardrails/guardrail_policies"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline inline-block mt-1"
-                  >
-                    Learn more in the documentation →
-                  </a>
                 </div>
               }
               type="info"
@@ -421,14 +413,6 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
                     <li>Group guardrails into a single policy</li>
                     <li>Inherit from existing policies and override what you need</li>
                   </ul>
-                  <a
-                    href="https://docs.litellm.ai/docs/proxy/guardrails/guardrail_policies"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline inline-block mt-1"
-                  >
-                    Learn more in the documentation →
-                  </a>
                 </div>
               }
               type="info"
@@ -553,14 +537,6 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
                       wildcards (<code>prod-*</code>).
                     </li>
                   </ul>
-                  <a
-                    href="https://docs.litellm.ai/docs/proxy/guardrails/guardrail_policies#attachments"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline inline-block mt-1"
-                  >
-                    Learn more about attachments →
-                  </a>
                 </div>
               }
               type="info"
