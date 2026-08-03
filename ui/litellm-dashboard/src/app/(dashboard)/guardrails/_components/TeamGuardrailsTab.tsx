@@ -421,12 +421,12 @@ function DetailPanel({
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
                 <KeyIcon className="h-3.5 w-3.5 text-blue-500" />
-                <span className="text-xs font-semibold text-blue-800">Forward LiteLLM API Key</span>
+                <span className="text-xs font-semibold text-blue-800">Forward caller API Key</span>
               </div>
               <Toggle enabled={g.forwardKey} onToggle={onToggleForwardKey} />
             </div>
             <p className="text-xs text-blue-700 leading-relaxed">
-              When enabled, the caller&apos;s LiteLLM API key is forwarded as an{" "}
+              When enabled, the caller&apos;s API key is forwarded as an{" "}
               <code className="font-mono bg-blue-100 px-1 rounded-sm">Authorization</code> header to your guardrail
               endpoint. This allows your guardrail to authenticate model calls using the original caller&apos;s
               credentials.
@@ -612,7 +612,7 @@ function DetailPanel({
             <InfoIcon className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
             <p className="text-xs text-gray-500 leading-relaxed">
               This guardrail runs on a separate instance. It receives the user request and forwards the result to the
-              next step in the pipeline. See LiteLLM Generic Guardrail API docs for configuration details.
+              next step in the pipeline. See the generic guardrail API documentation for configuration details.
             </p>
           </div>
         </div>

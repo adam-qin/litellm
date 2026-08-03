@@ -152,6 +152,24 @@ describe("Sidebar (leftnav)", () => {
     });
   });
 
+  it("preserves the original Guardrails and Policies role visibility", () => {
+    mockUseAuthorized.mockReturnValueOnce({
+      userId: "internal-user-id",
+      accessToken: "test-access-token",
+      userRole: "internal",
+      token: "test-token",
+      userEmail: "internal@example.com",
+      premiumUser: false,
+      disabledPersonalKeyCreation: false,
+      showSSOBanner: false,
+    });
+
+    renderWithProviders(<Sidebar {...defaultProps} />);
+
+    expect(screen.getByText("护栏")).toBeInTheDocument();
+    expect(screen.queryByText("策略")).not.toBeInTheDocument();
+  });
+
   it("shows Internal Users but not Organizations for organization admins", () => {
     mockUseAuthorized.mockReturnValueOnce({
       userId: "org-admin-user-id",

@@ -137,7 +137,13 @@ const menuGroups: MenuGroup[] = [
     groupLabel: "安全合规",
     items: [
       { key: "guardrails", page: "guardrails", label: "护栏", icon: <ShieldCheck {...ICON} /> },
-      { key: "policies", page: "policies", label: "策略", icon: <ScrollText {...ICON} /> },
+      {
+        key: "policies",
+        page: "policies",
+        label: "策略",
+        icon: <ScrollText {...ICON} />,
+        roles: all_admin_roles,
+      },
     ],
   },
   {

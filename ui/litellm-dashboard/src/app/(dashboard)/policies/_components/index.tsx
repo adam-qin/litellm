@@ -548,7 +548,7 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
 
             <Alert
               message="Enterprise Feature Notice"
-              description="Parts of policy attachments will be on LiteLLM Enterprise in subsequent releases."
+              description="部分策略绑定能力将在后续版本中作为 XHub 企业功能提供。"
               type="warning"
               showIcon
               closable
