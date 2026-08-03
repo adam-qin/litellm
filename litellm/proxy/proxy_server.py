@@ -6132,6 +6132,7 @@ class ProxyConfig:
         """
         from litellm.proxy.management_endpoints.config_override_endpoints import (
             HASHICORP_ENV_VAR_MAPPING,
+            _apply_hashicorp_key_management_settings,
             _clear_hashicorp_vault_state,
             _get_current_env_values,
             _parse_config_value,
@@ -6161,16 +6162,24 @@ class ProxyConfig:
             # Decrypt all fields and set env vars
             decrypted_data = self._decrypt_db_variables(config_data)
 
-            # Snapshot current env vars so we can restore on failure
+            # Snapshot all process-local state so a failed reload is atomic.
             previous_env = _get_current_env_values(HASHICORP_ENV_VAR_MAPPING)
+            previous_secret_manager_client = litellm.secret_manager_client
+            previous_key_management_system = litellm._key_management_system
+            previous_key_management_settings = litellm._key_management_settings
+            previous_cached_config = self._last_hashicorp_vault_config
             _set_env_vars(decrypted_data)
+            _apply_hashicorp_key_management_settings(decrypted_data)
 
             # Reinitialize the secret manager
             try:
                 self.initialize_secret_manager(key_management_system="hashicorp_vault")
             except Exception:
-                # Restore previous working env vars instead of wiping all
                 _set_env_vars(previous_env)
+                litellm.secret_manager_client = previous_secret_manager_client
+                litellm._key_management_system = previous_key_management_system
+                litellm._key_management_settings = previous_key_management_settings
+                self._last_hashicorp_vault_config = previous_cached_config
                 raise
 
             self._last_hashicorp_vault_config = config_data.copy()

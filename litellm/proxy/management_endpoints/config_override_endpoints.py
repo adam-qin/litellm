@@ -36,6 +36,7 @@ from litellm.types.proxy.management_endpoints.config_overrides import (
     ConfigOverrideSettingsResponse,
     HashicorpVaultConfig,
 )
+from litellm.types.secret_managers.main import KeyManagementSettings
 
 router = APIRouter()
 
@@ -129,6 +130,11 @@ HASHICORP_SENSITIVE_FIELDS: Set[str] = {
     "client_key",
 }
 
+HASHICORP_KEY_MANAGEMENT_FIELDS: Set[str] = {
+    "store_virtual_keys",
+    "prefix_for_stored_virtual_keys",
+}
+
 _sensitive_masker = SensitiveDataMasker()
 
 
@@ -197,12 +203,42 @@ def _set_env_vars(config_data: Dict[str, Any]) -> None:
             os.environ.pop(env_var_name, None)
 
 
+def _get_hashicorp_key_management_values() -> Dict[str, Any]:
+    """Return the Virtual Key storage settings currently active on this pod."""
+    settings = litellm._key_management_settings or KeyManagementSettings()
+    return {
+        field: getattr(settings, field)
+        for field in HASHICORP_KEY_MANAGEMENT_FIELDS
+    }
+
+
+def _apply_hashicorp_key_management_settings(config_data: Mapping[str, Any]) -> None:
+    """Apply Vault-owned Virtual Key settings while preserving unrelated KMS options."""
+    current_settings = litellm._key_management_settings or KeyManagementSettings()
+    settings_data = current_settings.model_dump(exclude_none=False)
+    for field in HASHICORP_KEY_MANAGEMENT_FIELDS:
+        if field in config_data:
+            settings_data[field] = config_data[field]
+    litellm._key_management_settings = KeyManagementSettings(**settings_data)
+
+
+def _reset_hashicorp_key_management_settings() -> None:
+    """Reset only settings controlled by the Hashicorp Vault configuration page."""
+    _apply_hashicorp_key_management_settings(
+        {
+            "store_virtual_keys": False,
+            "prefix_for_stored_virtual_keys": "litellm/",
+        }
+    )
+
+
 def _clear_hashicorp_vault_state(proxy_config: Any) -> None:
-    """Clear all Hashicorp Vault state: env vars, secret manager, and change-detection cache."""
+    """Clear all Hashicorp Vault state: env vars, secret manager, settings, and cache."""
     _set_env_vars({})
     if litellm._key_management_system == KeyManagementSystem.HASHICORP_VAULT:
         litellm.secret_manager_client = None
         litellm._key_management_system = None
+    _reset_hashicorp_key_management_settings()
     proxy_config._last_hashicorp_vault_config = None
 
 
@@ -242,30 +278,38 @@ async def update_hashicorp_vault_config(
         )
 
     config_data = config.model_dump(exclude_none=True)
+    managed_fields = set(HASHICORP_ENV_VAR_MAPPING) | HASHICORP_KEY_MANAGEMENT_FIELDS
 
-    # Merge ALL fields the user didn't send: try DB first, fall back to env vars.
+    # Merge ALL fields the user didn't send: try DB first, then active pod state.
     # Omitted field = keep existing; empty string = clear/remove the field.
     existing_record = await ConfigOverridesRepository(prisma_client).table.find_unique(
         where={"config_type": "hashicorp_vault"}
     )
     existing_decrypted: Optional[Dict[str, Any]] = None
     env_values: Dict[str, Any] = {}
+    current_key_management_values = _get_hashicorp_key_management_values()
     if existing_record is not None and existing_record.config_value is not None:
         existing_data = _parse_config_value(existing_record.config_value)
         existing_decrypted = proxy_config._decrypt_db_variables(existing_data)
-        for field in HASHICORP_ENV_VAR_MAPPING:
-            if field not in config_data and existing_decrypted.get(field):
+        for field in managed_fields:
+            if field not in config_data and field in existing_decrypted:
                 config_data[field] = existing_decrypted[field]
     else:
-        # No DB record (or DB record with null config_value) — merge from
-        # current env vars instead.
+        # No DB record (or DB record with null config_value) — merge Vault
+        # connection fields from env vars and Virtual Key settings from this pod.
         env_values = _get_current_env_values(HASHICORP_ENV_VAR_MAPPING)
         for field in HASHICORP_ENV_VAR_MAPPING:
             if field not in config_data and env_values.get(field):
                 config_data[field] = env_values[field]
+        for field, value in current_key_management_values.items():
+            if field not in config_data:
+                config_data[field] = value
 
-    # Strip empty strings — they signal "clear this field"
+    # Strip empty strings — they signal "clear this field". A cleared Virtual
+    # Key prefix falls back to the stable default instead of becoming empty.
     config_data = {k: v for k, v in config_data.items() if v != ""}
+    config_data.setdefault("store_virtual_keys", False)
+    config_data.setdefault("prefix_for_stored_virtual_keys", "litellm/")
 
     # Validate that the config has enough fields to initialize
     has_vault_addr = bool(config_data.get("vault_addr"))
@@ -287,37 +331,65 @@ async def update_hashicorp_vault_config(
             "or both Client Certificate and Client Key",
         )
 
-    # Snapshot current env vars so we can restore on failure
+    # Snapshot all process-local state so a failed reconfiguration is atomic.
     previous_env = _get_current_env_values(HASHICORP_ENV_VAR_MAPPING)
+    previous_secret_manager_client = litellm.secret_manager_client
+    previous_key_management_system = litellm._key_management_system
+    previous_key_management_settings = litellm._key_management_settings
+    previous_cached_config = proxy_config._last_hashicorp_vault_config
 
-    # Set env vars and verify the secret manager can initialize before persisting
+    # Apply settings and verify the secret manager can initialize before persisting.
     _set_env_vars(config_data)
+    _apply_hashicorp_key_management_settings(config_data)
 
     try:
         proxy_config.initialize_secret_manager(key_management_system="hashicorp_vault")
     except Exception as e:
         _set_env_vars(previous_env)
+        litellm.secret_manager_client = previous_secret_manager_client
+        litellm._key_management_system = previous_key_management_system
+        litellm._key_management_settings = previous_key_management_settings
+        proxy_config._last_hashicorp_vault_config = previous_cached_config
         verbose_proxy_logger.exception("Error reinitializing Hashicorp Vault secret manager: %s", str(e))
         raise HTTPException(
             status_code=500,
             detail=f"Failed to initialize secret manager: {e}",
         )
 
-    # Only persist to DB after successful init
-    encrypted_data = proxy_config._encrypt_env_variables(config_data)
-    config_value = safe_dumps(encrypted_data)
-    await ConfigOverridesRepository(prisma_client).table.upsert(
-        where={"config_type": "hashicorp_vault"},
-        data={
-            "create": {
-                "config_type": "hashicorp_vault",
-                "config_value": config_value,
+    # Only persist to DB after successful init. If persistence fails, restore
+    # the previous working client and settings so this pod does not diverge.
+    try:
+        # Preserve the boolean type in the DB record. Connection strings and the
+        # Virtual Key prefix are encrypted, while store_virtual_keys remains a
+        # JSON boolean so partial updates and cross-pod reloads do not rely on
+        # string-to-boolean coercion.
+        values_to_encrypt = {
+            key: value
+            for key, value in config_data.items()
+            if key != "store_virtual_keys"
+        }
+        encrypted_data = proxy_config._encrypt_env_variables(values_to_encrypt)
+        encrypted_data["store_virtual_keys"] = config_data["store_virtual_keys"]
+        config_value = safe_dumps(encrypted_data)
+        await ConfigOverridesRepository(prisma_client).table.upsert(
+            where={"config_type": "hashicorp_vault"},
+            data={
+                "create": {
+                    "config_type": "hashicorp_vault",
+                    "config_value": config_value,
+                },
+                "update": {
+                    "config_value": config_value,
+                },
             },
-            "update": {
-                "config_value": config_value,
-            },
-        },
-    )
+        )
+    except Exception:
+        _set_env_vars(previous_env)
+        litellm.secret_manager_client = previous_secret_manager_client
+        litellm._key_management_system = previous_key_management_system
+        litellm._key_management_settings = previous_key_management_settings
+        proxy_config._last_hashicorp_vault_config = previous_cached_config
+        raise
 
     # Update change-detection cache so the background reload doesn't redundantly re-init
     proxy_config._last_hashicorp_vault_config = safe_json_loads(config_value)
@@ -393,8 +465,9 @@ async def get_hashicorp_vault_config(
             field_schema=field_schema,
         )
 
-    # Fallback to env vars — also mask sensitive values
+    # Fallback to env vars and the active pod's Virtual Key settings.
     env_values = _get_current_env_values(HASHICORP_ENV_VAR_MAPPING)
+    env_values.update(_get_hashicorp_key_management_values())
     masked_env_values = _mask_sensitive_fields(env_values, HASHICORP_SENSITIVE_FIELDS)
 
     return ConfigOverrideSettingsResponse(

@@ -248,9 +248,16 @@ class KeyManagementEventHooks:
                         )
                     )
                 )
-        # delete the keys from the secret manager
-        await KeyManagementEventHooks._delete_virtual_keys_from_secret_manager(keys_being_deleted=keys_being_deleted)
-        pass
+        # Delete from the secret manager as a best-effort post-processing step.
+        try:
+            await KeyManagementEventHooks._delete_virtual_keys_from_secret_manager(
+                keys_being_deleted=keys_being_deleted
+            )
+        except Exception as e:
+            verbose_proxy_logger.warning(
+                "Failed to delete virtual key from secret manager: %s",
+                e,
+            )
 
     @staticmethod
     async def _store_virtual_key_in_secret_manager(secret_name: str, secret_token: str, team_id: Optional[str] = None):
@@ -272,16 +279,24 @@ class KeyManagementEventHooks:
                     tags = getattr(litellm._key_management_settings, "tags", None)
                     description = getattr(litellm._key_management_settings, "description", None)
                     optional_params = await KeyManagementEventHooks._get_secret_manager_optional_params(team_id)
+                    prefixed_secret_name = KeyManagementEventHooks._get_secret_name(secret_name)
                     verbose_proxy_logger.debug(
-                        f"Creating secret with {secret_name} and tags={tags} and description={description}"
+                        "Creating virtual key secret: secret_name=%s, team_id=%s",
+                        prefixed_secret_name,
+                        team_id,
                     )
 
-                    await litellm.secret_manager_client.async_write_secret(
-                        secret_name=KeyManagementEventHooks._get_secret_name(secret_name),
+                    result = await litellm.secret_manager_client.async_write_secret(
+                        secret_name=prefixed_secret_name,
                         description=description,
                         secret_value=secret_token,
                         tags=tags,
                         optional_params=optional_params,
+                    )
+                    KeyManagementEventHooks._raise_for_secret_manager_error(
+                        operation="write",
+                        secret_name=prefixed_secret_name,
+                        result=result,
                     )
 
     @staticmethod
@@ -309,12 +324,32 @@ class KeyManagementEventHooks:
                 # store the key in the secret manager
                 if isinstance(litellm.secret_manager_client, BaseSecretManager):
                     optional_params = await KeyManagementEventHooks._get_secret_manager_optional_params(team_id)
-                    await litellm.secret_manager_client.async_rotate_secret(
-                        current_secret_name=KeyManagementEventHooks._get_secret_name(current_secret_name),
-                        new_secret_name=KeyManagementEventHooks._get_secret_name(new_secret_name),
+                    prefixed_current_name = KeyManagementEventHooks._get_secret_name(current_secret_name)
+                    prefixed_new_name = KeyManagementEventHooks._get_secret_name(new_secret_name)
+                    result = await litellm.secret_manager_client.async_rotate_secret(
+                        current_secret_name=prefixed_current_name,
+                        new_secret_name=prefixed_new_name,
                         new_secret_value=new_secret_value,
                         optional_params=optional_params,
                     )
+                    KeyManagementEventHooks._raise_for_secret_manager_error(
+                        operation="rotate",
+                        secret_name=prefixed_new_name,
+                        result=result,
+                    )
+
+    @staticmethod
+    def _raise_for_secret_manager_error(
+        operation: str,
+        secret_name: str,
+        result: Any,
+    ) -> None:
+        """Convert fail-as-data responses into exceptions for outer fail-open hooks."""
+        if isinstance(result, dict) and result.get("status") == "error":
+            message = result.get("message") or "Secret manager returned an error"
+            raise RuntimeError(
+                f"Secret manager {operation} failed for {secret_name}: {message}"
+            )
 
     @staticmethod
     def _get_secret_name(secret_name: str) -> str:
@@ -349,9 +384,15 @@ class KeyManagementEventHooks:
                                     team_id
                                 ] = await KeyManagementEventHooks._get_secret_manager_optional_params(team_id)
                             optional_params = team_settings_cache[team_id]
-                            await litellm.secret_manager_client.async_delete_secret(
-                                secret_name=KeyManagementEventHooks._get_secret_name(key.key_alias),
+                            prefixed_secret_name = KeyManagementEventHooks._get_secret_name(key.key_alias)
+                            result = await litellm.secret_manager_client.async_delete_secret(
+                                secret_name=prefixed_secret_name,
                                 optional_params=optional_params,
+                            )
+                            KeyManagementEventHooks._raise_for_secret_manager_error(
+                                operation="delete",
+                                secret_name=prefixed_secret_name,
+                                result=result,
                             )
                         else:
                             verbose_proxy_logger.warning(

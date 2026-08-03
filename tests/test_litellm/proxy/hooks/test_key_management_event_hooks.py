@@ -155,6 +155,102 @@ class TestKeyManagementEventHooksIndependentOperations:
         assert email_called["called"] is True
 
 
+class TestStoreVirtualKeyInSecretManager:
+    """Tests Virtual Key naming, write parameters, and fail-as-data handling."""
+
+    @pytest.mark.asyncio
+    async def test_store_virtual_key_uses_prefix_and_team_settings(self):
+        import litellm
+        from litellm.secret_managers.base_secret_manager import BaseSecretManager
+        from litellm.types.secret_managers.main import KeyManagementSettings
+
+        manager = MagicMock(spec=BaseSecretManager)
+        manager.async_write_secret = AsyncMock(return_value={"status": "success"})
+        old_client = litellm.secret_manager_client
+        old_settings = litellm._key_management_settings
+        try:
+            litellm.secret_manager_client = manager
+            litellm._key_management_settings = KeyManagementSettings(
+                store_virtual_keys=True,
+                prefix_for_stored_virtual_keys="xhub/keys",
+            )
+            with patch.object(
+                KeyManagementEventHooks,
+                "_get_secret_manager_optional_params",
+                new_callable=AsyncMock,
+                return_value={"namespace": "team-a"},
+            ):
+                await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
+                    secret_name="backend-prod",
+                    secret_token="sk-secret-value",
+                    team_id="team-1",
+                )
+
+            manager.async_write_secret.assert_awaited_once_with(
+                secret_name="xhub/keys/backend-prod",
+                description=None,
+                secret_value="sk-secret-value",
+                tags=None,
+                optional_params={"namespace": "team-a"},
+            )
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_settings = old_settings
+
+    @pytest.mark.asyncio
+    async def test_store_virtual_key_raises_for_error_response(self):
+        import litellm
+        from litellm.secret_managers.base_secret_manager import BaseSecretManager
+        from litellm.types.secret_managers.main import KeyManagementSettings
+
+        manager = MagicMock(spec=BaseSecretManager)
+        manager.async_write_secret = AsyncMock(
+            return_value={"status": "error", "message": "Vault unavailable"}
+        )
+        old_client = litellm.secret_manager_client
+        old_settings = litellm._key_management_settings
+        try:
+            litellm.secret_manager_client = manager
+            litellm._key_management_settings = KeyManagementSettings(
+                store_virtual_keys=True,
+                prefix_for_stored_virtual_keys="xhub/keys/",
+            )
+            with pytest.raises(RuntimeError, match="Vault unavailable"):
+                await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
+                    secret_name="virtual-key-token-123",
+                    secret_token="sk-secret-value",
+                )
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_settings = old_settings
+
+    @pytest.mark.asyncio
+    async def test_generated_hook_uses_token_id_when_alias_is_missing(self):
+        data = MagicMock(key_alias=None, team_id=None, send_invite_email=False)
+        response = MagicMock(token_id="token-123", key="sk-secret")
+        user = MagicMock()
+
+        with (
+            patch("litellm.store_audit_logs", False),
+            patch.object(
+                KeyManagementEventHooks,
+                "_store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+            ) as store_secret,
+        ):
+            await KeyManagementEventHooks.async_key_generated_hook(
+                data=data,
+                response=response,
+                user_api_key_dict=user,
+            )
+
+        store_secret.assert_awaited_once_with(
+            secret_name="virtual-key-token-123",
+            secret_token="sk-secret",
+            team_id=None,
+        )
+
+
 class TestRotateVirtualKeyInSecretManager:
     """Tests for _rotate_virtual_key_in_secret_manager with team_id support."""
 

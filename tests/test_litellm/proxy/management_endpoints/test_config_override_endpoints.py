@@ -19,6 +19,7 @@ from litellm.proxy.proxy_server import app
 from litellm.types.proxy.management_endpoints.config_overrides import (
     HashicorpVaultConfig,
 )
+from litellm.types.secret_managers.main import KeyManagementSettings
 
 VAULT_URL = "/config_overrides/hashicorp_vault"
 
@@ -85,6 +86,7 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
     monkeypatch.setattr(ps, "prisma_client", mock_prisma)
     monkeypatch.setattr(ps, "proxy_config", mock_cfg)
     old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+    old_settings = litellm._key_management_settings
     _set_admin()
 
     try:
@@ -96,12 +98,21 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
                 "vault_token": "my-secret-vault-token",
                 "vault_namespace": "admin",
                 "vault_mount_name": "secret",
+                "store_virtual_keys": True,
+                "prefix_for_stored_virtual_keys": "xhub/virtual-keys/",
             },
         )
         assert r.status_code == 200
         assert os.environ["HCP_VAULT_ADDR"] == "https://vault.example.com"
         data = _upserted_data(mock_db)
         assert data["vault_token"] == "enc_my-secret-vault-token"
+        assert data["store_virtual_keys"] is True
+        assert data["prefix_for_stored_virtual_keys"] == "enc_xhub/virtual-keys/"
+        assert litellm._key_management_settings.store_virtual_keys is True
+        assert (
+            litellm._key_management_settings.prefix_for_stored_virtual_keys
+            == "xhub/virtual-keys/"
+        )
         mock_cfg.initialize_secret_manager.assert_called_with(
             key_management_system="hashicorp_vault"
         )
@@ -114,7 +125,9 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         vals = r.json()["values"]
         assert vals["vault_addr"] == "https://vault.example.com"
         assert "*" in vals["vault_token"]
-        assert "properties" in r.json()["field_schema"]
+        assert vals["store_virtual_keys"] is True
+        assert vals["prefix_for_stored_virtual_keys"] == "xhub/virtual-keys/"
+        assert "store_virtual_keys" in r.json()["field_schema"]["properties"]
 
         # 3. POST partial: omitted fields merge from DB
         r = client.post(VAULT_URL, json={"vault_addr": "https://vault.new.com"})
@@ -123,6 +136,8 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         assert data["vault_addr"] == "enc_https://vault.new.com"
         assert data["vault_token"] == "enc_my-secret-vault-token"
         assert data["vault_namespace"] == "enc_admin"
+        assert data["store_virtual_keys"] is True
+        assert data["prefix_for_stored_virtual_keys"] == "enc_xhub/virtual-keys/"
 
         # 4. POST empty string: clears field, preserves others
         step3 = {
@@ -150,6 +165,8 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         assert _upserted_data(mock_db) == {
             "vault_addr": "enc_https://v.com",
             "vault_token": "enc_tok",
+            "store_virtual_keys": True,
+            "prefix_for_stored_virtual_keys": "enc_xhub/virtual-keys/",
         }
 
         # 6. DELETE: clears everything
@@ -159,6 +176,8 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         assert r.status_code == 200
         assert os.environ.get("HCP_VAULT_ADDR") is None
         assert litellm.secret_manager_client is None
+        assert litellm._key_management_settings.store_virtual_keys is False
+        assert litellm._key_management_settings.prefix_for_stored_virtual_keys == "litellm/"
 
         # 7. DELETE idempotent
         mock_db.delete = AsyncMock(
@@ -174,6 +193,8 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         monkeypatch.setenv("HCP_VAULT_NAMESPACE", "env-ns")
         r = client.get(VAULT_URL)
         assert r.json()["values"]["vault_addr"] == "https://vault.env.com"
+        assert r.json()["values"]["store_virtual_keys"] is False
+        assert r.json()["values"]["prefix_for_stored_virtual_keys"] == "litellm/"
 
         # 9. POST: merge from env vars
         monkeypatch.setenv("HCP_VAULT_TOKEN", "env-token")
@@ -185,6 +206,8 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         data = _upserted_data(mock_db)
         assert data["vault_token"] == "enc_env-token"
         assert data["vault_mount_name"] == "enc_env-mount"
+        assert data["store_virtual_keys"] is False
+        assert data["prefix_for_stored_virtual_keys"] == "enc_litellm/"
 
         # 10. _set_env_vars: empty string unsets
         monkeypatch.setenv("HCP_VAULT_TOKEN", "existing")
@@ -211,6 +234,7 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
     finally:
         litellm.secret_manager_client = old_client
         litellm._key_management_system = old_kms
+        litellm._key_management_settings = old_settings
         _cleanup()
 
 
@@ -226,6 +250,7 @@ async def test_hashicorp_vault_validation_errors_and_access_control(
     monkeypatch.setattr(ps, "prisma_client", mock_prisma)
     monkeypatch.setattr(ps, "proxy_config", mock_cfg)
     old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+    old_settings = litellm._key_management_settings
     _set_admin()
 
     try:
@@ -240,14 +265,32 @@ async def test_hashicorp_vault_validation_errors_and_access_control(
         assert "authentication" in r.json()["detail"].lower()
 
         # 3. Init failure → 500, env vars restored
+        original_secret_manager = MagicMock()
+        original_settings = KeyManagementSettings(
+            store_virtual_keys=False,
+            prefix_for_stored_virtual_keys="existing/",
+        )
+        litellm.secret_manager_client = original_secret_manager
+        litellm._key_management_system = KeyManagementSystem.AWS_SECRET_MANAGER
+        litellm._key_management_settings = original_settings
         mock_cfg.initialize_secret_manager = MagicMock(side_effect=Exception("fail"))
         monkeypatch.setenv("HCP_VAULT_ADDR", "https://vault.old.com")
         monkeypatch.setenv("HCP_VAULT_TOKEN", "old-token")
         r = client.post(
-            VAULT_URL, json={"vault_addr": "https://bad.com", "vault_token": "bad"}
+            VAULT_URL,
+            json={
+                "vault_addr": "https://bad.com",
+                "vault_token": "bad",
+                "store_virtual_keys": True,
+                "prefix_for_stored_virtual_keys": "new/",
+            },
         )
         assert r.status_code == 500
         assert os.environ["HCP_VAULT_ADDR"] == "https://vault.old.com"
+        assert litellm.secret_manager_client is original_secret_manager
+        assert litellm._key_management_system == KeyManagementSystem.AWS_SECRET_MANAGER
+        assert litellm._key_management_settings is original_settings
+        assert mock_cfg._last_hashicorp_vault_config == {"vault_addr": "old"}
         mock_db.upsert.assert_not_awaited()
 
         # 4. DELETE preserves non-Vault secret manager
@@ -272,6 +315,7 @@ async def test_hashicorp_vault_validation_errors_and_access_control(
     finally:
         litellm.secret_manager_client = old_client
         litellm._key_management_system = old_kms
+        litellm._key_management_settings = old_settings
         _cleanup()
 
 

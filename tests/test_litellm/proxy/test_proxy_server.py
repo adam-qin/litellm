@@ -4753,6 +4753,57 @@ async def test_init_hashicorp_vault_config_override_retries_on_transport_error()
     )
 
 
+@pytest.mark.asyncio
+async def test_init_hashicorp_vault_config_override_restores_virtual_key_settings(
+    monkeypatch,
+):
+    """DB hot reload restores Virtual Key storage settings on every pod."""
+    import json
+
+    import litellm
+    from litellm.proxy.proxy_server import ProxyConfig
+    from litellm.types.secret_managers.main import KeyManagementSettings
+
+    proxy_config = ProxyConfig()
+    config_data = {
+        "vault_addr": "https://vault.example.com",
+        "vault_token": "token",
+        "store_virtual_keys": True,
+        "prefix_for_stored_virtual_keys": "xhub/keys/",
+    }
+    record = MagicMock(config_value=json.dumps(config_data))
+    mock_prisma_client = MagicMock()
+    mock_prisma_client.db.litellm_configoverrides.find_unique = AsyncMock(
+        return_value=record
+    )
+    proxy_config._decrypt_db_variables = MagicMock(return_value=config_data.copy())
+    proxy_config.initialize_secret_manager = MagicMock()
+
+    previous_settings = litellm._key_management_settings
+    try:
+        litellm._key_management_settings = KeyManagementSettings(
+            store_virtual_keys=False,
+            prefix_for_stored_virtual_keys="litellm/",
+        )
+        await proxy_config._init_hashicorp_vault_config_override(
+            prisma_client=mock_prisma_client
+        )
+
+        assert litellm._key_management_settings.store_virtual_keys is True
+        assert (
+            litellm._key_management_settings.prefix_for_stored_virtual_keys
+            == "xhub/keys/"
+        )
+        proxy_config.initialize_secret_manager.assert_called_once_with(
+            key_management_system="hashicorp_vault"
+        )
+        assert proxy_config._last_hashicorp_vault_config == config_data
+    finally:
+        litellm._key_management_settings = previous_settings
+        monkeypatch.delenv("HCP_VAULT_ADDR", raising=False)
+        monkeypatch.delenv("HCP_VAULT_TOKEN", raising=False)
+
+
 def test_update_config_fields_uppercases_env_vars(monkeypatch):
     """
     Ensure environment variables pulled from DB are uppercased when applied so

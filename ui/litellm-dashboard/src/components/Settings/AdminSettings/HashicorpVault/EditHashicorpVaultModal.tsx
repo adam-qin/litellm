@@ -4,7 +4,7 @@ import { useHashicorpVaultConfig } from "@/app/(dashboard)/hooks/configOverrides
 import { useUpdateHashicorpVaultConfig } from "@/app/(dashboard)/hooks/configOverrides/useUpdateHashicorpVaultConfig";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import NotificationManager from "@/components/molecules/notifications_manager";
-import { Button, Divider, Form, Input, Modal, Space, Typography } from "antd";
+import { Alert, Button, Divider, Form, Input, Modal, Space, Switch, Typography } from "antd";
 import React, { useEffect } from "react";
 import { SENSITIVE_FIELDS, FIELD_LABELS } from "./constants";
 
@@ -34,6 +34,11 @@ const FIELD_GROUPS: FieldGroup[] = [
     subtitle: "Optional client certificate for mTLS.",
     fields: ["client_cert", "client_key", "vault_cert_role"],
   },
+  {
+    title: "Virtual Key Storage",
+    subtitle: "Store newly created XHub Virtual Keys in Vault KV v2 using a stable key alias or token ID.",
+    fields: ["store_virtual_keys", "prefix_for_stored_virtual_keys"],
+  },
 ];
 
 interface EditHashicorpVaultModalProps {
@@ -51,6 +56,17 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
   const schema = data?.field_schema;
   const properties = schema?.properties ?? {};
   const rawValues = data?.values ?? {};
+  const virtualKeyStorageFields = {
+    store_virtual_keys: {
+      description: "Automatically store newly created Virtual Keys in Vault",
+      type: "boolean",
+    },
+    prefix_for_stored_virtual_keys: {
+      description: "Prefix used for Virtual Key secret names",
+      type: "string",
+    },
+  };
+  const effectiveProperties = { ...virtualKeyStorageFields, ...properties };
 
   useEffect(() => {
     if (isVisible && data) {
@@ -96,7 +112,7 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
   };
 
   const renderField = (fieldName: string) => {
-    const fieldSchema = properties[fieldName];
+    const fieldSchema = effectiveProperties[fieldName];
     if (!fieldSchema) return null;
 
     const rules =
@@ -108,6 +124,20 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
     const existingValue = rawValues[fieldName];
     const hasExistingValue = isSensitive && existingValue != null && existingValue !== "";
     const placeholder = hasExistingValue ? `Leave blank to keep existing (${existingValue})` : fieldSchema?.description;
+
+    if (fieldName === "store_virtual_keys") {
+      return (
+        <Form.Item
+          key={fieldName}
+          name={fieldName}
+          label={FIELD_LABELS[fieldName] ?? fieldName}
+          valuePropName="checked"
+          extra="Key creation returns immediately. Vault persistence runs asynchronously and does not roll back a successfully created Key."
+        >
+          <Switch checkedChildren="Enabled" unCheckedChildren="Disabled" />
+        </Form.Item>
+      );
+    }
 
     return (
       <Form.Item key={fieldName} name={fieldName} label={FIELD_LABELS[fieldName] ?? fieldName} rules={rules}>
@@ -133,6 +163,13 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
       }
       onCancel={handleCancel}
     >
+      <Alert
+        type="info"
+        showIcon
+        className="mb-4"
+        message="Virtual Key persistence is asynchronous and best-effort"
+        description="XHub creates the Virtual Key first, then writes it to Vault in the background. A Vault failure is logged but does not invalidate the created Key."
+      />
       <Form form={form} layout="vertical" onFinish={handleSubmit}>
         {FIELD_GROUPS.map((group, index) => (
           <div key={group.title}>

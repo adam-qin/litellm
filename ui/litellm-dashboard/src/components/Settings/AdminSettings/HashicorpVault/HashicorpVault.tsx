@@ -84,7 +84,10 @@ export default function HashicorpVault() {
 
   const renderValue = (key: string) => {
     const value = rawValues[key];
-    if (!value) {
+    if (key === "store_virtual_keys") {
+      return <Text>{value === true ? "Enabled" : "Disabled"}</Text>;
+    }
+    if (value === undefined || value === null || value === "") {
       return <span className="text-gray-400 italic">Not configured</span>;
     }
     if (SENSITIVE_FIELDS.has(key)) {
@@ -124,80 +127,84 @@ export default function HashicorpVault() {
     );
   };
 
+  if (isLoading) {
+    return (
+      <Card>
+        <Skeleton active />
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card>
+        <Alert
+          type="error"
+          message="Could not load Hashicorp Vault configuration"
+          description={error instanceof Error ? error.message : undefined}
+        />
+      </Card>
+    );
+  }
+
   return (
     <>
-      {isLoading ? (
-        <Card>
-          <Skeleton active />
-        </Card>
-      ) : isError ? (
-        <Card>
-          <Alert
-            type="error"
-            message="Could not load Hashicorp Vault configuration"
-            description={error instanceof Error ? error.message : undefined}
-          />
-        </Card>
-      ) : (
-        <Card>
-          <Space direction="vertical" size="large" className="w-full">
-            {/* Header */}
-            <Flex justify="space-between" align="center">
-              <Flex align="center" gap={12}>
-                <KeyRound className="w-6 h-6 text-gray-400" />
-                <div>
-                  <Title level={3} style={{ marginBottom: 0 }}>
-                    Hashicorp Vault
-                  </Title>
-                  <Text type="secondary">Manage secret manager configuration</Text>
-                </div>
-              </Flex>
-
-              <Space>
-                {isConfigured && (
-                  <>
-                    <Button icon={<PlugZap className="w-4 h-4" />} loading={isTesting} onClick={handleTestConnection}>
-                      Test Connection
-                    </Button>
-                    <Button icon={<Edit className="w-4 h-4" />} onClick={() => setIsEditModalVisible(true)}>
-                      Edit Configuration
-                    </Button>
-                    <Button danger icon={<Trash2 className="w-4 h-4" />} onClick={() => setIsDeleteModalOpen(true)}>
-                      Delete Configuration
-                    </Button>
-                  </>
-                )}
-              </Space>
+      <Card>
+        <Space direction="vertical" size="large" className="w-full">
+          {/* Header */}
+          <Flex justify="space-between" align="center">
+            <Flex align="center" gap={12}>
+              <KeyRound className="w-6 h-6 text-gray-400" />
+              <div>
+                <Title level={3} style={{ marginBottom: 0 }}>
+                  Hashicorp Vault
+                </Title>
+                <Text type="secondary">Manage secret manager configuration</Text>
+              </div>
             </Flex>
 
-            {isConfigured && (
-              <Alert
-                type="info"
-                showIcon
-                message={'Secrets must be stored with the field name "key"'}
-                description={
-                  <>
-                    <Text code>vault kv put secret/SECRET_NAME key=secret_value</Text>
-                    <br />
-                    <Typography.Link
-                      href="https://docs.litellm.ai/docs/secret_managers/hashicorp_vault"
-                      target="_blank"
-                    >
-                      View documentation
-                    </Typography.Link>
-                  </>
-                }
-              />
-            )}
+            <Space>
+              {isConfigured && (
+                <>
+                  <Button icon={<PlugZap className="w-4 h-4" />} loading={isTesting} onClick={handleTestConnection}>
+                    Test Connection
+                  </Button>
+                  <Button icon={<Edit className="w-4 h-4" />} onClick={() => setIsEditModalVisible(true)}>
+                    Edit Configuration
+                  </Button>
+                  <Button danger icon={<Trash2 className="w-4 h-4" />} onClick={() => setIsDeleteModalOpen(true)}>
+                    Delete Configuration
+                  </Button>
+                </>
+              )}
+            </Space>
+          </Flex>
 
-            {isConfigured ? (
-              renderSettings()
-            ) : (
-              <HashicorpVaultEmptyPlaceholder onAdd={() => setIsEditModalVisible(true)} />
-            )}
-          </Space>
-        </Card>
-      )}
+          {isConfigured && (
+            <Alert
+              type="info"
+              showIcon
+              message={'Secrets must be stored with the field name "key"'}
+              description={
+                <>
+                  <Text code>vault kv put secret/SECRET_NAME key=secret_value</Text>
+                  <br />
+                  <Text type="secondary">
+                    When automatic storage is enabled, XHub writes newly created Virtual Keys in the background. Vault
+                    failures do not roll back Key creation.
+                  </Text>
+                </>
+              }
+            />
+          )}
+
+          {isConfigured ? (
+            renderSettings()
+          ) : (
+            <HashicorpVaultEmptyPlaceholder onAdd={() => setIsEditModalVisible(true)} />
+          )}
+        </Space>
+      </Card>
 
       <EditHashicorpVaultModal
         isVisible={isEditModalVisible}

@@ -50,6 +50,14 @@ class HashicorpVaultConfig(BaseModel):
         default=None,
         description="Optional path prefix for secrets (e.g., myapp -> secret/data/myapp/{secret_name})",
     )
+    store_virtual_keys: Optional[bool] = Field(
+        default=None,
+        description="Automatically store newly generated Virtual Keys in Hashicorp Vault",
+    )
+    prefix_for_stored_virtual_keys: Optional[str] = Field(
+        default=None,
+        description="Prefix used for Virtual Key secret names (default: litellm/)",
+    )
 
 
 class ConfigOverrideSettingsResponse(BaseModel):
