@@ -22,6 +22,17 @@ vi.mock("antd", async (importOriginal) => {
 
 const EXPECTED_ATTACHMENT_ID = "att-11111111-2222-3333-4444-555555555555" as const;
 
+const componentMocks = vi.hoisted(() => ({
+  policyTemplates: vi.fn(),
+  flowBuilderPage: vi.fn(() => null),
+  addPolicyForm: vi.fn(() => null),
+  guardrailSelectionModal: vi.fn(() => null),
+  templateParameterModal: vi.fn(() => null),
+  aiSuggestionModal: vi.fn(() => null),
+  policyTestPanel: vi.fn(() => null),
+  addAttachmentForm: vi.fn(() => null),
+}));
+
 const networkingMocks = vi.hoisted(() => ({
   deletePolicyAttachmentCall: vi.fn().mockResolvedValue(undefined),
   getPoliciesList: vi.fn().mockResolvedValue({ policies: [] }),
@@ -56,21 +67,6 @@ vi.mock("./impact_popover", () => ({
   default: () => <button type="button" aria-label="View blast radius" />,
 }));
 
-vi.mock("@heroicons/react/outline", () => ({
-  TrashIcon: function TrashIcon() {
-    return null;
-  },
-  SwitchVerticalIcon: function SwitchVerticalIcon() {
-    return null;
-  },
-  ChevronUpIcon: function ChevronUpIcon() {
-    return null;
-  },
-  ChevronDownIcon: function ChevronDownIcon() {
-    return null;
-  },
-}));
-
 vi.mock("@tremor/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tremor/react")>();
   return {
@@ -95,18 +91,24 @@ vi.mock("@tremor/react", async (importOriginal) => {
         onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e.target.checked),
         className,
       }),
-    Icon: ({ icon: _IconComp, onClick, className }: any) =>
-      React.createElement("button", { type: "button", onClick, className }, "TrashIcon"),
   };
 });
 
 vi.mock("./policy_templates", () => ({
   __esModule: true,
-  default: () => <div data-testid="policy-templates-stub" />,
+  default: (props: any) => {
+    componentMocks.policyTemplates(props);
+    return (
+      <div data-testid="policy-templates-stub">
+        {props.canManage && <button type="button">应用模板</button>}
+        {props.canManage && <button type="button">AI 推荐模板</button>}
+      </div>
+    );
+  },
 }));
 
 vi.mock("./pipeline_flow_builder", () => ({
-  FlowBuilderPage: () => null,
+  FlowBuilderPage: componentMocks.flowBuilderPage,
 }));
 
 vi.mock("./policy_info", () => ({
@@ -116,37 +118,63 @@ vi.mock("./policy_info", () => ({
 
 vi.mock("./add_policy_form", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.addPolicyForm,
 }));
 
 vi.mock("./guardrail_selection_modal", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.guardrailSelectionModal,
 }));
 
 vi.mock("./template_parameter_modal", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.templateParameterModal,
 }));
 
 vi.mock("./ai_suggestion_modal", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.aiSuggestionModal,
 }));
 
 vi.mock("./policy_test_panel", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.policyTestPanel,
 }));
 
 vi.mock("./add_attachment_form", () => ({
   __esModule: true,
-  default: () => null,
+  default: componentMocks.addAttachmentForm,
 }));
 
 describe("PoliciesPanel attachment delete", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("keeps Admin Viewer read-only across policy management features", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PoliciesPanel accessToken="test-token" userRole="Admin Viewer" />);
+
+    await waitFor(() => {
+      expect(networkingMocks.getPoliciesList).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByRole("tab", { name: "策略模拟器" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ 新建策略" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "应用模板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AI 推荐模板" })).not.toBeInTheDocument();
+    expect(componentMocks.policyTemplates).toHaveBeenCalledWith(expect.objectContaining({ canManage: false }));
+
+    await user.click(screen.getByRole("tab", { name: "策略绑定" }));
+    expect(screen.queryByRole("button", { name: "+ 新建绑定" })).not.toBeInTheDocument();
+
+    expect(componentMocks.addPolicyForm).not.toHaveBeenCalled();
+    expect(componentMocks.addAttachmentForm).not.toHaveBeenCalled();
+    expect(componentMocks.policyTestPanel).not.toHaveBeenCalled();
+    expect(componentMocks.guardrailSelectionModal).not.toHaveBeenCalled();
+    expect(componentMocks.templateParameterModal).not.toHaveBeenCalled();
+    expect(componentMocks.aiSuggestionModal).not.toHaveBeenCalled();
+    expect(componentMocks.flowBuilderPage).not.toHaveBeenCalled();
   });
 
   it("should call deletePolicyAttachmentCall after the user confirms delete in the attachment modal", async () => {
@@ -157,13 +185,14 @@ describe("PoliciesPanel attachment delete", () => {
       expect(networkingMocks.getPolicyAttachmentsList).toHaveBeenCalled();
     });
 
-    await user.click(screen.getByRole("tab", { name: /^attachments$/i }));
+    await user.click(screen.getByRole("tab", { name: "策略绑定" }));
 
     await waitFor(() => {
       expect(screen.getByText("test-policy")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: /TrashIcon/i }));
+    await user.click(screen.getByTestId(`attachment-actions-${EXPECTED_ATTACHMENT_ID}`));
+    await user.click(await screen.findByTestId("attachment-action-delete"));
 
     const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
     expect(within(dialog).getByText(/Are you sure you want to delete this attachment/i)).toBeInTheDocument();
@@ -190,12 +219,13 @@ describe("PoliciesPanel attachment delete", () => {
       expect(networkingMocks.getPolicyAttachmentsList).toHaveBeenCalled();
     });
 
-    await user.click(screen.getByRole("tab", { name: /^attachments$/i }));
+    await user.click(screen.getByRole("tab", { name: "策略绑定" }));
     await waitFor(() => {
       expect(screen.getByText("test-policy")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: /TrashIcon/i }));
+    await user.click(screen.getByTestId(`attachment-actions-${EXPECTED_ATTACHMENT_ID}`));
+    await user.click(await screen.findByTestId("attachment-action-delete"));
     const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
 
     const deleteButton = within(dialog).getByRole("button", { name: /^delete$/i });

@@ -225,6 +225,40 @@ const findMenuItemKey = (page: string): string => {
 
 const labelText = (item: MenuItem): string => (typeof item.label === "string" ? item.label : item.key);
 
+export const getVisibleMenuGroups = (
+  userRole: string,
+  isOrgAdmin: boolean,
+  enabledPagesInternalUsers?: string[] | null,
+): MenuGroup[] => {
+  const isAdmin = isAdminRole(userRole);
+  const filterItemsByRole = (items: MenuItem[]): MenuItem[] =>
+    items
+      .map((item) => ({ ...item, children: item.children ? filterItemsByRole(item.children) : undefined }))
+      .filter((item) => {
+        if (item.children && item.children.length === 0) return false;
+        if (item.key === "users") {
+          const hasRoleAccess = !item.roles || item.roles.includes(userRole) || isOrgAdmin;
+          if (!hasRoleAccess) return false;
+          if (!isAdmin && enabledPagesInternalUsers != null) return enabledPagesInternalUsers.includes(item.page);
+          return true;
+        }
+        if (item.roles && !item.roles.includes(userRole)) return false;
+        if (!isAdmin && enabledPagesInternalUsers != null) {
+          if (item.children && item.children.length > 0) {
+            const hasVisibleChildren = item.children.some((child) => enabledPagesInternalUsers.includes(child.page));
+            if (hasVisibleChildren) return true;
+          }
+          return enabledPagesInternalUsers.includes(item.page);
+        }
+        return true;
+      });
+
+  return menuGroups
+    .filter((group) => !group.roles || group.roles.includes(userRole))
+    .map((group) => ({ groupLabel: group.groupLabel, items: filterItemsByRole(group.items) }))
+    .filter((group) => group.items.length > 0);
+};
+
 const SECTION_DISPLAY: Record<string, string> = {
   模型网关: "模型网关",
   可观测性: "可观测性",
@@ -294,34 +328,7 @@ const Sidebar_: React.FC<SidebarProps> = ({
     );
   }, [userId, organizations]);
 
-  const filterItemsByRole = (items: MenuItem[]): MenuItem[] => {
-    const isAdmin = isAdminRole(userRole);
-    return items
-      .map((item) => ({ ...item, children: item.children ? filterItemsByRole(item.children) : undefined }))
-      .filter((item) => {
-        if (item.children && item.children.length === 0) return false;
-        if (item.key === "users") {
-          const hasRoleAccess = !item.roles || item.roles.includes(userRole) || isOrgAdmin;
-          if (!hasRoleAccess) return false;
-          if (!isAdmin && enabledPagesInternalUsers != null) return enabledPagesInternalUsers.includes(item.page);
-          return true;
-        }
-        if (item.roles && !item.roles.includes(userRole)) return false;
-        if (!isAdmin && enabledPagesInternalUsers != null) {
-          if (item.children && item.children.length > 0) {
-            const hasVisibleChildren = item.children.some((child) => enabledPagesInternalUsers.includes(child.page));
-            if (hasVisibleChildren) return true;
-          }
-          return enabledPagesInternalUsers.includes(item.page);
-        }
-        return true;
-      });
-  };
-
-  const visibleGroups = menuGroups
-    .filter((group) => !group.roles || group.roles.includes(userRole))
-    .map((group) => ({ groupLabel: group.groupLabel, items: filterItemsByRole(group.items) }))
-    .filter((group) => group.items.length > 0);
+  const visibleGroups = getVisibleMenuGroups(userRole, isOrgAdmin, enabledPagesInternalUsers);
 
   const toggleGroup = (key: string) => {
     if (collapsed) {

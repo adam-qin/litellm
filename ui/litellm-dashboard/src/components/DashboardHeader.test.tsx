@@ -53,4 +53,13 @@ describe("DashboardHeader breadcrumb", () => {
     expect(screen.getByText("日志")).toBeInTheDocument();
     expect(screen.queryByText("可观测性")).not.toBeInTheDocument();
   });
+
+  it("renders the tools divider centered rather than stretched to the top of the row", () => {
+    const { container } = render(<DashboardHeader page="logs" />);
+
+    const separators = container.querySelectorAll('[data-slot="separator"][data-orientation="vertical"]');
+    expect(separators).toHaveLength(1);
+    expect(separators[0].className).not.toMatch(/self-stretch/);
+    expect(separators[0].className).toContain("data-vertical:self-center");
+  });
 });

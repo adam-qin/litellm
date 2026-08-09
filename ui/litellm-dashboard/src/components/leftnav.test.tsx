@@ -1,51 +1,30 @@
 import { screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../../tests/test-utils";
-import Sidebar, { menuGroups, getBreadcrumb } from "./leftnav";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import Sidebar, { menuGroups, getBreadcrumb, getVisibleMenuGroups } from "./leftnav";
 
-vi.mock("../utils/roles", () => {
-  return {
-    all_admin_roles: ["admin", "admin_viewer"],
-    internalUserRoles: ["internal"],
-    rolesWithWriteAccess: ["admin", "internal"],
-    rolesAllowedToViewWriteScopedPages: ["admin", "internal", "admin_viewer"],
-    isAdminRole: (role: string) => role === "admin" || role === "admin_viewer",
-  };
-});
-
-const { mockUseAuthorized, mockUseOrganizations } = vi.hoisted(() => {
-  const mockUseAuthorized = vi.fn(() => ({
+const { authState, mockUseAuthorized, mockUseOrganizations } = vi.hoisted(() => ({
+  authState: {
     userId: "test-user-id",
     accessToken: "test-access-token",
-    userRole: "admin",
+    userRole: "Admin",
     token: "test-token",
     userEmail: "test@example.com",
     premiumUser: false,
     disabledPersonalKeyCreation: false,
     showSSOBanner: false,
-  }));
+  },
+  mockUseAuthorized: vi.fn(),
+  mockUseOrganizations: vi.fn(() => ({ data: [], isLoading: false, error: null })),
+}));
 
-  const mockUseOrganizations = vi.fn(() => ({
-    data: [],
-    isLoading: false,
-    error: null,
-  }));
-
-  return { mockUseAuthorized, mockUseOrganizations };
-});
-
-vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
+vi.mock("@/app/(dashboard)/hooks/useAuthorized.ts", () => ({
   default: mockUseAuthorized,
 }));
 
 vi.mock("@/app/(dashboard)/hooks/organizations/useOrganizations", () => ({
   useOrganizations: mockUseOrganizations,
-}));
-
-// The redesigned sidebar reads the custom logo from ThemeContext; the test tree
-// has no ThemeProvider, so stub the hook.
-vi.mock("@/contexts/ThemeContext", () => ({
-  useTheme: () => ({ logoUrl: null, faviconUrl: null, setLogoUrl: vi.fn(), setFaviconUrl: vi.fn() }),
 }));
 
 // Version tag + logout target come from network hooks; keep them inert in unit tests.
@@ -60,15 +39,52 @@ const collectNavKeys = (): string[] =>
   menuGroups.flatMap((group) => group.items.flatMap((item) => [item.key, ...(item.children ?? []).map((c) => c.key)]));
 
 describe("Sidebar (leftnav)", () => {
+  it("filters menu groups according to the supplied role", () => {
+    const labels = (role: string, isOrgAdmin = false) =>
+      getVisibleMenuGroups(role, isOrgAdmin).flatMap((group) =>
+        group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+      );
+
+    expect(labels("Admin")).toContain("模型调试");
+    expect(labels("Admin Viewer")).not.toContain("模型调试");
+    expect(labels("Admin Viewer")).toContain("模型与端点");
+    expect(labels("Internal User")).toContain("护栏");
+    expect(labels("Internal User")).not.toContain("策略");
+    expect(labels("Org Admin", true)).toContain("内部用户");
+  });
+
+  const adminAuth = {
+    userId: "test-user-id",
+    accessToken: "test-access-token",
+    userRole: "Admin",
+    token: "test-token",
+    userEmail: "test@example.com",
+    premiumUser: false,
+    disabledPersonalKeyCreation: false,
+    showSSOBanner: false,
+  };
   const defaultProps = {
     setPage: vi.fn(),
     defaultSelectedKey: "api-keys",
     collapsed: false,
   };
+  const renderSidebar = (props = defaultProps) =>
+    renderWithProviders(
+      <ThemeProvider>
+        <Sidebar {...props} />
+      </ThemeProvider>,
+    );
 
-  it("renders all top-level (non-nested) tabs for admin", () => {
-    renderWithProviders(<Sidebar {...defaultProps} />);
+  beforeEach(() => {
+    Object.assign(authState, adminAuth);
+    mockUseAuthorized.mockReset();
+    mockUseAuthorized.mockReturnValue(authState);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ values: {} }) }));
+    mockUseOrganizations.mockReset();
+    mockUseOrganizations.mockImplementation(() => ({ data: [], isLoading: false, error: null }));
+  });
 
+  it("defines all top-level (non-nested) tabs for admin", () => {
     const topLevelLabels = [
       "虚拟密钥",
       "模型调试",
@@ -84,13 +100,14 @@ describe("Sidebar (leftnav)", () => {
       "系统设置",
     ];
 
-    topLevelLabels.forEach((label) => {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    });
+    const visibleLabels = getVisibleMenuGroups("Admin", false).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+    topLevelLabels.forEach((label) => expect(visibleLabels).toContain(label === "系统设置" ? "settings" : label));
   });
 
   it("does not render non-core product menus", () => {
-    renderWithProviders(<Sidebar {...defaultProps} />);
+    renderSidebar();
 
     [
       "Agentic",
@@ -125,7 +142,7 @@ describe("Sidebar (leftnav)", () => {
     const adminViewerAuth = {
       userId: "admin-viewer-user-id",
       accessToken: "test-access-token",
-      userRole: "admin_viewer",
+      userRole: "Admin Viewer",
       token: "test-token",
       userEmail: "viewer@example.com",
       premiumUser: false,
@@ -134,29 +151,30 @@ describe("Sidebar (leftnav)", () => {
     };
 
     it("hides Playground from Admin Viewer (cost-incurring action)", () => {
-      mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
-      renderWithProviders(<Sidebar {...defaultProps} />);
+      Object.assign(authState, adminViewerAuth);
+      renderSidebar();
       expect(screen.queryByText("模型调试")).not.toBeInTheDocument();
     });
 
     it("shows Models + Endpoints to Admin Viewer (read-only)", () => {
-      mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
-      renderWithProviders(<Sidebar {...defaultProps} />);
-      expect(screen.getByText("模型与端点")).toBeInTheDocument();
+      const visibleLabels = getVisibleMenuGroups(adminViewerAuth.userRole, false).flatMap((group) =>
+        group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+      );
+      expect(visibleLabels).toContain("模型与端点");
     });
 
     it("shows Logs to Admin Viewer", () => {
-      mockUseAuthorized.mockReturnValueOnce(adminViewerAuth);
-      renderWithProviders(<Sidebar {...defaultProps} />);
+      Object.assign(authState, adminViewerAuth);
+      renderSidebar();
       expect(screen.getByText("日志")).toBeInTheDocument();
     });
   });
 
   it("preserves the original Guardrails and Policies role visibility", () => {
-    mockUseAuthorized.mockReturnValueOnce({
+    Object.assign(authState, {
       userId: "internal-user-id",
       accessToken: "test-access-token",
-      userRole: "internal",
+      userRole: "Internal User",
       token: "test-token",
       userEmail: "internal@example.com",
       premiumUser: false,
@@ -164,17 +182,17 @@ describe("Sidebar (leftnav)", () => {
       showSSOBanner: false,
     });
 
-    renderWithProviders(<Sidebar {...defaultProps} />);
+    renderSidebar();
 
     expect(screen.getByText("护栏")).toBeInTheDocument();
     expect(screen.queryByText("策略")).not.toBeInTheDocument();
   });
 
   it("shows Internal Users but not Organizations for organization admins", () => {
-    mockUseAuthorized.mockReturnValueOnce({
+    Object.assign(authState, {
       userId: "org-admin-user-id",
       accessToken: "test-access-token",
-      userRole: "viewer",
+      userRole: "Org Admin",
       token: "test-token",
       userEmail: "orgadmin@example.com",
       premiumUser: false,
@@ -204,14 +222,15 @@ describe("Sidebar (leftnav)", () => {
       error: null,
     } as any);
 
-    renderWithProviders(<Sidebar {...defaultProps} />);
-
-    expect(screen.getByText("内部用户")).toBeInTheDocument();
-    expect(screen.queryByText("Organizations")).not.toBeInTheDocument();
+    const visibleLabels = getVisibleMenuGroups("Org Admin", true).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+    expect(visibleLabels).toContain("内部用户");
+    expect(visibleLabels).not.toContain("Organizations");
   });
 
   it("marks the selected page's nav item active", () => {
-    renderWithProviders(<Sidebar {...defaultProps} defaultSelectedKey="logs" />);
+    renderSidebar({ ...defaultProps, defaultSelectedKey: "logs" });
     const logs = screen.getByText("日志").closest("a");
     expect(logs).toHaveAttribute("data-active", "true");
     // A different item must not be active.
@@ -219,7 +238,7 @@ describe("Sidebar (leftnav)", () => {
   });
 
   it("hides labels but keeps items reachable (icon + link) when collapsed to the rail", () => {
-    const { container } = renderWithProviders(<Sidebar {...defaultProps} collapsed />);
+    const { container } = renderSidebar({ ...defaultProps, collapsed: true });
     expect(container.querySelector('[data-slot="sidebar"]')).toHaveAttribute("data-collapsed", "true");
     // The item stays navigable in the icon-only rail: its link still renders with
     // an icon (asserting the <a> + svg, not the text, so a removed icon would

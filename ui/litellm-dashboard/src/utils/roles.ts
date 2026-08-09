@@ -23,6 +23,10 @@ export const isProxyAdminRole = (role: string): boolean => {
   return role === "proxy_admin" || role === "Admin";
 };
 
+export const isWritableAdminRole = (role: string): boolean => {
+  return role === "Admin" || role === "proxy_admin" || role === "app_admin";
+};
+
 export const isUserTeamAdminForAnyTeam = (teams: Team[] | null, userID: string): boolean => {
   if (teams == null) {
     return false;

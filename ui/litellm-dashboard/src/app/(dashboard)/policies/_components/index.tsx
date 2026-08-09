@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Button, TabGroup, TabList, Tab, TabPanels, TabPanel } from "@tremor/react";
-import { Alert } from "antd";
+import { Alert, AlertDescription, AlertTitle, AlertAction } from "@/components/shared/Alert";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import MessageManager from "@/components/molecules/message_manager";
-import { InfoCircleOutlined } from "@ant-design/icons";
-import { isAdminRole } from "@/utils/roles";
-import PolicyTable from "./policy_table";
+import { Info, TriangleAlert, X } from "lucide-react";
+import { isWritableAdminRole } from "@/utils/roles";
+import PolicyTable from "./PolicyTable";
 import PolicyInfoView from "./policy_info";
 import AddPolicyForm from "./add_policy_form";
 import { FlowBuilderPage } from "./pipeline_flow_builder";
-import AttachmentTable from "./attachment_table";
+import AttachmentTable from "./AttachmentTable";
 import AddAttachmentForm from "./add_attachment_form";
 import PolicyTestPanel from "./policy_test_panel";
 import PolicyTemplates from "./policy_templates";
@@ -33,12 +34,50 @@ import { Policy, PolicyAttachment } from "@/components/policies/types";
 import { Guardrail } from "@/components/guardrails/types";
 import DeleteResourceModal from "@/components/common_components/DeleteResourceModal";
 
+interface DismissibleAlertProps {
+  title: string;
+  icon: React.ReactNode;
+  children?: React.ReactNode;
+}
+
+const DismissibleAlert: React.FC<DismissibleAlertProps> = ({ title, icon, children }) => {
+  const [isDismissed, setIsDismissed] = useState(false);
+
+  if (isDismissed) return null;
+
+  return (
+    <Alert className="mb-6">
+      {icon}
+      <AlertTitle>{title}</AlertTitle>
+      {children && <AlertDescription>{children}</AlertDescription>}
+      <AlertAction>
+        <Button variant="ghost" size="icon-sm" onClick={() => setIsDismissed(true)} aria-label={`Dismiss ${title}`}>
+          <X />
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+};
+
+const AboutPoliciesAlert = () => (
+  <DismissibleAlert title="关于策略" icon={<Info />}>
+    <p className="mb-3">策略用于组合多个护栏，并控制它们针对指定团队、密钥或模型的执行方式。</p>
+    <p className="mb-2 font-semibold">策略可以：</p>
+    <ul className="mb-3 ml-2 list-inside list-disc space-y-1">
+      <li>为团队、密钥或模型启用或停用指定护栏</li>
+      <li>将多个护栏组合为一项策略</li>
+      <li>继承现有策略，并按需覆盖配置</li>
+    </ul>
+  </DismissibleAlert>
+);
+
 interface PoliciesPanelProps {
   accessToken: string | null;
   userRole?: string;
 }
 
 const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) => {
+  const isAdmin = userRole ? isWritableAdminRole(userRole) : false;
   const [policiesList, setPoliciesList] = useState<Policy[]>([]);
   const [attachmentsList, setAttachmentsList] = useState<PolicyAttachment[]>([]);
   const [guardrailsList, setGuardrailsList] = useState<Guardrail[]>([]);
@@ -48,7 +87,7 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
   const [isAddAttachmentModalVisible, setIsAddAttachmentModalVisible] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<number>(0);
+  const [activeTab, setActiveTab] = useState<string>("templates");
   const [isDeleting, setIsDeleting] = useState(false);
   const [policyToDelete, setPolicyToDelete] = useState<Policy | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -66,8 +105,6 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
   const [loadedTemplates, setLoadedTemplates] = useState<any[]>([]);
   const [templateQueue, setTemplateQueue] = useState<any[]>([]);
   const [templateQueueProgress, setTemplateQueueProgress] = useState<{ current: number; total: number } | null>(null);
-
-  const isAdmin = userRole ? isAdminRole(userRole) : false;
 
   const fetchPolicies = useCallback(async () => {
     if (!accessToken) return;
@@ -315,7 +352,7 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
       // Pre-fill the add policy form with template data
       setEditingPolicy(selectedTemplate.templateData as Policy);
       setIsAddPolicyModalVisible(true);
-      setActiveTab(1); // Switch to Policies tab (now at index 1)
+      setActiveTab("policies");
 
       // Show success message
       if (createdGuardrails.length > 0) {
@@ -359,102 +396,75 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
   };
 
   return (
-    <div className="w-full mx-auto flex-auto overflow-y-auto m-8 p-2">
-      <TabGroup index={activeTab} onIndexChange={setActiveTab}>
-        <TabList className="mb-4">
-          <Tab>Templates</Tab>
-          <Tab>Policies</Tab>
-          <Tab>Attachments</Tab>
-          <Tab>Policy Simulator</Tab>
-        </TabList>
+    <div className="m-8 mx-auto w-full flex-auto overflow-y-auto p-2">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="templates" className="flex-none">
+            策略模板
+          </TabsTrigger>
+          <TabsTrigger value="policies" className="flex-none">
+            策略列表
+          </TabsTrigger>
+          <TabsTrigger value="attachments" className="flex-none">
+            策略绑定
+          </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="simulator" className="flex-none">
+              策略模拟器
+            </TabsTrigger>
+          )}
+        </TabsList>
 
-        <TabPanels>
-          <TabPanel>
-            <Alert
-              message="About Policies"
-              description={
-                <div>
-                  <p className="mb-3">
-                    Use policies to group guardrails and control which ones run for specific teams, keys, or models.
-                  </p>
-                  <p className="mb-2 font-semibold">Why use policies?</p>
-                  <ul className="list-disc list-inside mb-3 space-y-1 ml-2">
-                    <li>Enable/disable specific guardrails for teams, keys, or models</li>
-                    <li>Group guardrails into a single policy</li>
-                    <li>Inherit from existing policies and override what you need</li>
-                  </ul>
-                </div>
-              }
-              type="info"
-              icon={<InfoCircleOutlined />}
-              showIcon
-              closable
-              className="mb-6"
-            />
-            <PolicyTemplates
-              onUseTemplate={handleUseTemplate}
-              onOpenAiSuggestion={() => setIsAiSuggestionModalOpen(true)}
-              onTemplatesLoaded={setLoadedTemplates}
-              accessToken={accessToken}
-            />
-          </TabPanel>
+        <TabsContent value="templates">
+          <AboutPoliciesAlert />
+          <PolicyTemplates
+            onUseTemplate={handleUseTemplate}
+            onOpenAiSuggestion={() => setIsAiSuggestionModalOpen(true)}
+            onTemplatesLoaded={setLoadedTemplates}
+            accessToken={accessToken}
+            canManage={isAdmin}
+          />
+        </TabsContent>
 
-          <TabPanel>
-            <Alert
-              message="About Policies"
-              description={
-                <div>
-                  <p className="mb-3">
-                    Use policies to group guardrails and control which ones run for specific teams, keys, or models.
-                  </p>
-                  <p className="mb-2 font-semibold">Why use policies?</p>
-                  <ul className="list-disc list-inside mb-3 space-y-1 ml-2">
-                    <li>Enable/disable specific guardrails for teams, keys, or models</li>
-                    <li>Group guardrails into a single policy</li>
-                    <li>Inherit from existing policies and override what you need</li>
-                  </ul>
-                </div>
-              }
-              type="info"
-              icon={<InfoCircleOutlined />}
-              showIcon
-              closable
-              className="mb-6"
-            />
+        <TabsContent value="policies">
+          <AboutPoliciesAlert />
 
-            <div className="flex justify-between items-center mb-4">
+          {isAdmin && (
+            <div className="mb-4 flex items-center justify-between">
               <Button onClick={handleAddPolicy} disabled={!accessToken}>
-                + Add New Policy
+                + 新建策略
               </Button>
             </div>
+          )}
 
-            {selectedPolicyId ? (
-              <PolicyInfoView
-                policyId={selectedPolicyId}
-                onClose={() => setSelectedPolicyId(null)}
-                onEdit={(policy) => {
-                  setEditingPolicy(policy);
-                  setSelectedPolicyId(null);
-                  setShowFlowBuilder(true);
-                }}
-                accessToken={accessToken}
-                isAdmin={isAdmin}
-                getPolicy={getPolicyInfo}
-              />
-            ) : (
-              <PolicyTable
-                policies={policiesList}
-                isLoading={isLoading}
-                onDeleteClick={handleDeleteClick}
-                onEditClick={(policy) => {
-                  setEditingPolicy(policy);
-                  setShowFlowBuilder(true);
-                }}
-                onViewClick={(policyId) => setSelectedPolicyId(policyId)}
-                isAdmin={isAdmin}
-              />
-            )}
+          {selectedPolicyId ? (
+            <PolicyInfoView
+              policyId={selectedPolicyId}
+              onClose={() => setSelectedPolicyId(null)}
+              onEdit={(policy) => {
+                setEditingPolicy(policy);
+                setSelectedPolicyId(null);
+                setShowFlowBuilder(true);
+              }}
+              accessToken={accessToken}
+              isAdmin={isAdmin}
+              getPolicy={getPolicyInfo}
+            />
+          ) : (
+            <PolicyTable
+              policies={policiesList}
+              isLoading={isLoading}
+              onDeleteClick={handleDeleteClick}
+              onEditClick={(policy) => {
+                setEditingPolicy(policy);
+                setShowFlowBuilder(true);
+              }}
+              onViewClick={(policyId) => setSelectedPolicyId(policyId)}
+              isAdmin={isAdmin}
+            />
+          )}
 
+          {isAdmin && (
             <AddPolicyForm
               visible={isAddPolicyModalVisible}
               onClose={handleCloseModal}
@@ -470,7 +480,9 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
               createPolicy={createPolicyCall}
               updatePolicy={updatePolicyCall}
             />
+          )}
 
+          {isAdmin && (
             <DeleteResourceModal
               isOpen={isDeleteModalOpen}
               title="Delete Policy"
@@ -486,92 +498,59 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
               onOk={handleDeleteConfirm}
               confirmLoading={isDeleting}
             />
+          )}
+        </TabsContent>
 
-            <GuardrailSelectionModal
-              visible={isGuardrailSelectionModalOpen}
-              template={selectedTemplate}
-              existingGuardrails={existingGuardrailNames}
-              onConfirm={handleGuardrailSelectionConfirm}
-              onCancel={handleGuardrailSelectionCancel}
-              isLoading={isCreatingGuardrails}
-              progressInfo={templateQueueProgress}
-            />
+        <TabsContent value="attachments">
+          <DismissibleAlert title="关于策略绑定" icon={<Info />}>
+            <p className="mb-3">
+              策略绑定用于控制策略的生效范围。策略需要绑定到指定团队、密钥、模型、标签或全局范围后才会执行。
+            </p>
+            <p className="mb-2 font-semibold">支持的绑定范围：</p>
+            <ul className="mb-3 ml-2 list-inside list-disc space-y-1">
+              <li>
+                <strong>全局 (*)</strong> - 对全部请求生效
+              </li>
+              <li>
+                <strong>团队</strong> - 仅对指定团队生效
+              </li>
+              <li>
+                <strong>密钥</strong> - 仅对指定 API 密钥生效，并支持 dev-* 等通配符
+              </li>
+              <li>
+                <strong>模型</strong> - 仅在使用指定模型时生效
+              </li>
+              <li>
+                <strong>标签</strong> - 匹配密钥、团队或请求体中的 <code>metadata.tags</code>，并支持
+                <code>prod-*</code> 等通配符
+              </li>
+            </ul>
+          </DismissibleAlert>
 
-            <TemplateParameterModal
-              visible={isParameterModalOpen}
-              template={pendingTemplate}
-              onConfirm={handleParameterConfirm}
-              onCancel={handleParameterCancel}
-              isLoading={isEnrichingTemplate}
-              accessToken={accessToken || ""}
-            />
-          </TabPanel>
+          <DismissibleAlert title="企业功能提示" icon={<TriangleAlert />}>
+            部分高级策略绑定能力可能需要企业功能授权。
+          </DismissibleAlert>
 
-          <TabPanel>
-            <Alert
-              message="About Policy Attachments"
-              description={
-                <div>
-                  <p className="mb-3">
-                    Policy attachments control where your policies apply. Policies don&apos;t do anything until you
-                    attach them to specific teams, keys, models, tags, or globally.
-                  </p>
-                  <p className="mb-2 font-semibold">Attachment Scopes:</p>
-                  <ul className="list-disc list-inside mb-3 space-y-1 ml-2">
-                    <li>
-                      <strong>Global (*)</strong> - Applies to all requests
-                    </li>
-                    <li>
-                      <strong>Teams</strong> - Applies only to specific teams
-                    </li>
-                    <li>
-                      <strong>Keys</strong> - Applies only to specific API keys (supports wildcards like dev-*)
-                    </li>
-                    <li>
-                      <strong>Models</strong> - Applies only when specific models are used
-                    </li>
-                    <li>
-                      <strong>Tags</strong> - Matches tags from key/team <code>metadata.tags</code> or tags passed
-                      dynamically in the request body (<code>metadata.tags</code>). Use this to enforce policies across
-                      groups, e.g. &quot;all keys tagged <code>healthcare</code> get HIPAA guardrails.&quot; Supports
-                      wildcards (<code>prod-*</code>).
-                    </li>
-                  </ul>
-                </div>
-              }
-              type="info"
-              icon={<InfoCircleOutlined />}
-              showIcon
-              closable
-              className="mb-6"
-            />
-
-            <Alert
-              message="Enterprise Feature Notice"
-              description="部分策略绑定能力将在后续版本中作为 XHub 企业功能提供。"
-              type="warning"
-              showIcon
-              closable
-              className="mb-6"
-            />
-
-            <div className="flex justify-between items-center mb-4">
+          {isAdmin && (
+            <div className="mb-4 flex items-center justify-between">
               <Button
                 onClick={() => setIsAddAttachmentModalVisible(true)}
                 disabled={!accessToken || policiesList.length === 0}
               >
-                + Add New Attachment
+                + 新建绑定
               </Button>
             </div>
+          )}
 
-            <AttachmentTable
-              attachments={attachmentsList}
-              isLoading={isAttachmentsLoading}
-              onDeleteClick={handleDeleteAttachmentClick}
-              isAdmin={isAdmin}
-              accessToken={accessToken}
-            />
+          <AttachmentTable
+            attachments={attachmentsList}
+            isLoading={isAttachmentsLoading}
+            onDeleteClick={handleDeleteAttachmentClick}
+            isAdmin={isAdmin}
+            accessToken={accessToken}
+          />
 
+          {isAdmin && (
             <AddAttachmentForm
               visible={isAddAttachmentModalVisible}
               onClose={() => setIsAddAttachmentModalVisible(false)}
@@ -580,49 +559,78 @@ const PoliciesPanel: React.FC<PoliciesPanelProps> = ({ accessToken, userRole }) 
               policies={policiesList}
               createAttachment={createPolicyAttachmentCall}
             />
-          </TabPanel>
+          )}
+        </TabsContent>
 
-          <TabPanel>
+        {isAdmin && (
+          <TabsContent value="simulator">
             <PolicyTestPanel accessToken={accessToken} />
-          </TabPanel>
-        </TabPanels>
-      </TabGroup>
+          </TabsContent>
+        )}
+      </Tabs>
 
-      <DeleteResourceModal
-        isOpen={isDeleteAttachmentModalOpen}
-        title="Delete Attachment"
-        message="Are you sure you want to delete this attachment? This action cannot be undone."
-        resourceInformationTitle="Attachment Information"
-        resourceInformation={[
-          { label: "Attachment ID", value: attachmentToDelete?.attachment_id, code: true },
-          { label: "Policy", value: attachmentToDelete?.policy_name ?? "-" },
-          { label: "Scope", value: attachmentToDelete?.scope ?? "-" },
-        ]}
-        onCancel={handleAttachmentDeleteCancel}
-        onOk={handleAttachmentDeleteConfirm}
-        confirmLoading={deleteAttachmentMutation.isPending}
-      />
+      {isAdmin && (
+        <DeleteResourceModal
+          isOpen={isDeleteAttachmentModalOpen}
+          title="Delete Attachment"
+          message="Are you sure you want to delete this attachment? This action cannot be undone."
+          resourceInformationTitle="Attachment Information"
+          resourceInformation={[
+            { label: "Attachment ID", value: attachmentToDelete?.attachment_id, code: true },
+            { label: "Policy", value: attachmentToDelete?.policy_name ?? "-" },
+            { label: "Scope", value: attachmentToDelete?.scope ?? "-" },
+          ]}
+          onCancel={handleAttachmentDeleteCancel}
+          onOk={handleAttachmentDeleteConfirm}
+          confirmLoading={deleteAttachmentMutation.isPending}
+        />
+      )}
 
-      <AiSuggestionModal
-        visible={isAiSuggestionModalOpen}
-        onSelectTemplates={(selectedTemplates) => {
-          setIsAiSuggestionModalOpen(false);
-          if (selectedTemplates.length > 0) {
-            // Queue all templates: process first immediately, queue the rest
-            const [first, ...rest] = selectedTemplates;
-            setTemplateQueue(rest);
-            setTemplateQueueProgress(
-              selectedTemplates.length > 1 ? { current: 1, total: selectedTemplates.length } : null,
-            );
-            handleUseTemplate(first);
-          }
-        }}
-        onCancel={() => setIsAiSuggestionModalOpen(false)}
-        accessToken={accessToken}
-        allTemplates={loadedTemplates}
-      />
+      {isAdmin && (
+        <GuardrailSelectionModal
+          visible={isGuardrailSelectionModalOpen}
+          template={selectedTemplate}
+          existingGuardrails={existingGuardrailNames}
+          onConfirm={handleGuardrailSelectionConfirm}
+          onCancel={handleGuardrailSelectionCancel}
+          isLoading={isCreatingGuardrails}
+          progressInfo={templateQueueProgress}
+        />
+      )}
 
-      {showFlowBuilder && (
+      {isAdmin && (
+        <TemplateParameterModal
+          visible={isParameterModalOpen}
+          template={pendingTemplate}
+          onConfirm={handleParameterConfirm}
+          onCancel={handleParameterCancel}
+          isLoading={isEnrichingTemplate}
+          accessToken={accessToken || ""}
+        />
+      )}
+
+      {isAdmin && (
+        <AiSuggestionModal
+          visible={isAiSuggestionModalOpen}
+          onSelectTemplates={(selectedTemplates) => {
+            setIsAiSuggestionModalOpen(false);
+            if (selectedTemplates.length > 0) {
+              // Queue all templates: process first immediately, queue the rest
+              const [first, ...rest] = selectedTemplates;
+              setTemplateQueue(rest);
+              setTemplateQueueProgress(
+                selectedTemplates.length > 1 ? { current: 1, total: selectedTemplates.length } : null,
+              );
+              handleUseTemplate(first);
+            }
+          }}
+          onCancel={() => setIsAiSuggestionModalOpen(false)}
+          accessToken={accessToken}
+          allTemplates={loadedTemplates}
+        />
+      )}
+
+      {isAdmin && showFlowBuilder && (
         <FlowBuilderPage
           onBack={() => {
             setShowFlowBuilder(false);

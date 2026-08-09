@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isAdminRole,
   isProxyAdminRole,
+  isWritableAdminRole,
   isUserTeamAdminForAnyTeam,
   isUserTeamAdminForSingleTeam,
   rolesAllowedToViewWriteScopedPages,
@@ -44,6 +45,18 @@ describe("roles", () => {
       expect(isProxyAdminRole("Internal Viewer")).toBe(false);
       expect(isProxyAdminRole("regular_user")).toBe(false);
       expect(isProxyAdminRole("")).toBe(false);
+    });
+  });
+
+  describe("isWritableAdminRole", () => {
+    it("only permits write-capable proxy admins", () => {
+      expect(isWritableAdminRole("Admin")).toBe(true);
+      expect(isWritableAdminRole("proxy_admin")).toBe(true);
+      expect(isWritableAdminRole("app_admin")).toBe(true);
+      expect(isWritableAdminRole("Admin Viewer")).toBe(false);
+      expect(isWritableAdminRole("proxy_admin_viewer")).toBe(false);
+      expect(isWritableAdminRole("org_admin")).toBe(false);
+      expect(isWritableAdminRole("Internal User")).toBe(false);
     });
   });
 
@@ -91,6 +104,7 @@ describe("roles", () => {
           rpm_limit: null,
           organization_id: "org-1",
           created_at: "2024-01-01",
+          spend: 0,
           keys: [],
           members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "user" }],
         },
@@ -104,6 +118,7 @@ describe("roles", () => {
           rpm_limit: null,
           organization_id: "org-1",
           created_at: "2024-01-01",
+          spend: 0,
           keys: [],
           members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "admin" }],
         },
@@ -123,6 +138,7 @@ describe("roles", () => {
           rpm_limit: null,
           organization_id: "org-1",
           created_at: "2024-01-01",
+          spend: 0,
           keys: [],
           members_with_roles: [{ user_id: "user-1", user_email: "user1@test.com", role: "user" }],
         },
@@ -136,6 +152,7 @@ describe("roles", () => {
           rpm_limit: null,
           organization_id: "org-1",
           created_at: "2024-01-01",
+          spend: 0,
           keys: [],
           members_with_roles: [{ user_id: "user-2", user_email: "user2@test.com", role: "admin" }],
         },

@@ -104,12 +104,15 @@ vi.mock("@/components/molecules/notifications_manager", () => ({
 
 vi.mock("@tremor/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tremor/react")>();
-  return {
-    ...actual,
-    Button: React.forwardRef<HTMLButtonElement, any>(({ children, ...props }, ref) =>
+  const MockButton = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(
+    ({ children, ...props }, ref) =>
       // Render as a native button to avoid Tremor-specific behaviors in tests
       React.createElement("button", { ...props, ref }, children),
-    ),
+  );
+  MockButton.displayName = "MockTremorButton";
+  return {
+    ...actual,
+    Button: MockButton,
     Tooltip: ({ children, ..._props }: { children?: React.ReactNode; [key: string]: unknown }) => {
       // Return children directly without tooltip functionality to prevent flaky tests
       // This avoids issues with hover states, positioning, and DOM queries in tests
@@ -134,20 +137,6 @@ vi.mock("@tremor/react", async (importOriginal) => {
       }),
   };
 });
-
-// Global mock for useAuthorized hook to avoid repeating the same mock in every test file
-vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
-  default: () => ({
-    token: "123",
-    accessToken: "123",
-    userId: "user-1",
-    userEmail: "user@example.com",
-    userRole: "Admin",
-    premiumUser: false,
-    disabledPersonalKeyCreation: null,
-    showSSOBanner: false,
-  }),
-}));
 
 const pendingRefWarnings: string[] = [];
 const consumePendingRefWarnings = (): string[] => pendingRefWarnings.splice(0, pendingRefWarnings.length);
@@ -178,9 +167,8 @@ afterEach(() => {
 // Make toLocaleString deterministic in tests; individual tests can override
 // This returns ISO-like strings to keep assertions stable.
 vi.spyOn(Date.prototype, "toLocaleString").mockImplementation(function (this: Date, ..._args: unknown[]) {
-  const d = this;
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${this.getFullYear()}-${pad(this.getMonth() + 1)}-${pad(this.getDate())} ${pad(this.getHours())}:${pad(this.getMinutes())}:${pad(this.getSeconds())}`;
 });
 
 // Fixed matchMedia not found error in tests: https://github.com/vitest-dev/vitest/issues/821

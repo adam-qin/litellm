@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Card, Title, Text, TextInput, Button } from "@tremor/react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { UiLoadingSpinner } from "@/components/ui/ui-loading-spinner";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getProxyBaseUrl, getGlobalLitellmHeaderName } from "@/components/networking";
 import NotificationsManager from "@/components/molecules/notifications_manager";
@@ -62,7 +66,7 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
         }),
       });
       if (response.ok) {
-        NotificationsManager.success("Theme settings updated successfully!");
+        NotificationsManager.success("主题设置已更新");
         setLogoUrl(logoUrlInput || null);
         setFaviconUrl(faviconUrlInput || null);
       } else {
@@ -70,7 +74,7 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
       }
     } catch (error) {
       console.error("Error updating theme settings:", error);
-      NotificationsManager.fromBackend("Failed to update theme settings");
+      NotificationsManager.fromBackend("更新主题设置失败");
     } finally {
       setLoading(false);
     }
@@ -94,13 +98,13 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
         body: JSON.stringify({ logo_url: null, favicon_url: null }),
       });
       if (response.ok) {
-        NotificationsManager.success("Theme settings reset to default!");
+        NotificationsManager.success("主题设置已恢复默认");
       } else {
         throw new Error("Failed to reset");
       }
     } catch (error) {
       console.error("Error resetting theme settings:", error);
-      NotificationsManager.fromBackend("Failed to reset theme settings");
+      NotificationsManager.fromBackend("恢复默认主题设置失败");
     } finally {
       setLoading(false);
     }
@@ -113,50 +117,56 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
   return (
     <div className="w-full mx-auto max-w-4xl px-6 py-8">
       <div className="mb-8">
-        <Title className="text-2xl font-bold mb-2">UI Theme Customization</Title>
-        <Text className="text-gray-600">Customize your XHub admin dashboard with a custom logo and favicon.</Text>
+        <h1 className="mb-2 text-2xl font-bold">界面主题定制</h1>
+        <p className="text-sm text-muted-foreground">为 XHub 管理后台配置自定义 Logo 和站点图标。</p>
       </div>
-      <Card className="shadow-xs p-6">
-        <div className="space-y-6">
+      <Card>
+        <CardContent className="space-y-6">
           <div>
-            <Text className="text-sm font-medium text-gray-700 mb-2 block">Custom Logo URL</Text>
-            <TextInput
+            <Label htmlFor="ui-theme-logo-url" className="mb-2">
+              自定义 Logo 地址
+            </Label>
+            <Input
+              id="ui-theme-logo-url"
               placeholder="https://example.com/logo.png"
               value={logoUrlInput}
-              onValueChange={(v) => {
-                setLogoUrlInput(v);
-                setLogoUrl(v || null);
+              onChange={(event) => {
+                setLogoUrlInput(event.target.value);
+                setLogoUrl(event.target.value || null);
               }}
-              className="w-full"
             />
-            <Text className="text-xs text-gray-500 mt-1">
-              Enter a URL for your custom logo or leave empty for default
-            </Text>
+            <p className="mt-1 text-xs text-muted-foreground">
+              输入自定义 Logo 地址，留空则使用默认 Logo
+            </p>
           </div>
           <div>
-            <Text className="text-sm font-medium text-gray-700 mb-2 block">Custom Favicon URL</Text>
-            <TextInput
+            <Label htmlFor="ui-theme-favicon-url" className="mb-2">
+              自定义站点图标地址
+            </Label>
+            <Input
+              id="ui-theme-favicon-url"
               placeholder="https://example.com/favicon.ico"
               value={faviconUrlInput}
-              onValueChange={(v) => {
-                setFaviconUrlInput(v);
-                setFaviconUrl(v || null);
+              onChange={(event) => {
+                setFaviconUrlInput(event.target.value);
+                setFaviconUrl(event.target.value || null);
               }}
-              className="w-full"
             />
-            <Text className="text-xs text-gray-500 mt-1">
-              Enter a URL for your custom favicon (.ico, .png, or .svg) or leave empty for default
-            </Text>
+            <p className="mt-1 text-xs text-muted-foreground">
+              输入 .ico、.png 或 .svg 图标地址，留空则使用默认图标
+            </p>
           </div>
           <div className="flex gap-3 pt-4">
-            <Button onClick={handleSave} loading={loading} disabled={loading} color="indigo">
-              Save Changes
+            <Button onClick={handleSave} disabled={loading}>
+              {loading && <UiLoadingSpinner className="size-4" />}
+              保存更改
             </Button>
-            <Button onClick={handleReset} loading={loading} disabled={loading} variant="secondary" color="gray">
-              Reset to Default
+            <Button variant="outline" onClick={handleReset} disabled={loading}>
+              {loading && <UiLoadingSpinner className="size-4" />}
+              恢复默认
             </Button>
           </div>
-        </div>
+        </CardContent>
       </Card>
     </div>
   );

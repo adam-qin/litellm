@@ -62,10 +62,11 @@ proxy = [
     "azure-identity>=1.25.2,<2.0",
     "azure-storage-blob>=12.28.0,<13.0",
     "mcp>=1.28.1,<2.0",
-    "litellm-proxy-extras==0.4.76",
-    "litellm-enterprise==0.1.49",
+    "litellm-proxy-extras==0.4.81",
+    "litellm-enterprise==0.1.52",
     "RestrictedPython>=8.1,<9.0",
     "rich>=13.9.4,<14.0",
+    "InquirerPy>=0.3.4,<1.0",
     "polars>=1.38.1,<2.0",
     "soundfile>=0.12.1,<1.0",
     "pyroscope-io>=0.8.16,<1.0; sys_platform != 'win32'",
@@ -76,11 +77,12 @@ proxy = [
 ]
 # Thin client install for the `lite` CLI on developer laptops. The CLI's heavy
 # imports (fastapi, cryptography, ...) are all guarded, so it runs on the base
-# SDK plus just these three; none of the server runtime in `proxy` is pulled in.
+# SDK plus just these four; none of the server runtime in `proxy` is pulled in.
 cli = [
     "rich>=13.9.4,<14.0",
     "pyyaml>=6.0.3,<7.0",
     "requests>=2.32.0,<3.0",
+    "InquirerPy>=0.3.4,<1.0",
 ]
 extra_proxy = [
     "prisma>=0.11.0,<1.0",
@@ -99,6 +101,10 @@ utils = [
     "numpydoc>=1.8.0,<2.0",
 ]
 caching = ["diskcache>=5.6.3,<6.0"]
+# SAML SSO for the admin UI. python3-saml pulls in xmlsec/lxml, whose wheels
+# bundle the native libxmlsec1/libxml2 libraries, so no system packages are
+# required. Kept out of the base `proxy` extra so it stays optional.
+saml = ["python3-saml>=1.16.0,<2.0"]
 semantic-router = [
     "semantic-router>=0.1.15,<1.0; python_version < '3.14'",
     "aurelio-sdk>=0.0.19,<1.0; python_version < '3.14'",
@@ -117,6 +123,14 @@ stt-nvidia-riva = [
     "numpy>=1.26.0",
 ]
 google = ["google-cloud-aiplatform>=1.133.0,<2.0"]
+bedrock-realtime = [
+    # Bedrock Nova Sonic realtime (speech-to-speech) uses the
+    # InvokeModelWithBidirectionalStream API, which boto3 cannot do. This
+    # experimental AWS SDK (with its smithy-* deps, pulled transitively)
+    # provides the bidirectional stream; imported lazily in the realtime
+    # handler so litellm core stays usable without it.
+    "aws-sdk-bedrock-runtime>=0.7.0,<0.8.0; python_version >= '3.12'",
+]
 proxy-runtime = [
     # Historically bundled in the proxy Docker images via requirements.txt.
     # Keep these in a dedicated extra so uv-based images preserve the same
@@ -189,6 +203,8 @@ dev = [
 e2e-dev = [
     "playwright==1.61.0",
     "websockets>=15.0.1,<16.0",
+    "locust==2.45.0",
+    "mcp>=1.28.1,<2.0",
 ]
 proxy-dev = [
     "prisma==0.11.0",
