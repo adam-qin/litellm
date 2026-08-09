@@ -13,13 +13,11 @@ const { mockUseAuthorized, state, mockPoliciesPanel } = vi.hoisted(() => {
       accessToken: state.accessToken,
       userRole: state.userRole,
     })),
-    mockPoliciesPanel: vi.fn(
-      ({ accessToken, userRole }: { accessToken: string | null; userRole: string }) => (
-        <div data-testid="policies-panel">
-          {accessToken}:{userRole}
-        </div>
-      ),
-    ),
+    mockPoliciesPanel: vi.fn(({ accessToken, userRole }: { accessToken: string | null; userRole: string }) => (
+      <div data-testid="policies-panel">
+        {accessToken}:{userRole}
+      </div>
+    )),
   };
 });
 
@@ -44,17 +42,14 @@ describe("Policies page access guard", () => {
     });
   });
 
-  it.each(["Internal User", "Org User", "Undefined Role"])(
-    "blocks %s from direct policy access",
-    (userRole) => {
-      state.userRole = userRole;
-      render(<Policies />);
+  it.each(["Internal User", "Org User", "Undefined Role"])("blocks %s from direct policy access", (userRole) => {
+    state.userRole = userRole;
+    render(<Policies />);
 
-      expect(screen.getByText("无权访问策略管理。")).toBeInTheDocument();
-      expect(screen.queryByTestId("policies-panel")).not.toBeInTheDocument();
-      expect(mockPoliciesPanel).not.toHaveBeenCalled();
-    },
-  );
+    expect(screen.getByText("无权访问策略管理。")).toBeInTheDocument();
+    expect(screen.queryByTestId("policies-panel")).not.toBeInTheDocument();
+    expect(mockPoliciesPanel).not.toHaveBeenCalled();
+  });
 
   it("allows an admin viewer to open the page for read-only rendering", () => {
     state.userRole = "Admin Viewer";

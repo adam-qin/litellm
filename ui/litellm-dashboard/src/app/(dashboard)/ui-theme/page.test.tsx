@@ -16,15 +16,11 @@ const { mockUseAuthorized, state, mockUIThemeSettings } = vi.hoisted(() => {
       userId: state.userId,
     })),
     mockUIThemeSettings: vi.fn(
-      ({
-        accessToken,
-        userRole,
-        userID,
-      }: {
-        accessToken: string | null;
-        userRole: string;
-        userID: string | null;
-      }) => <div data-testid="ui-theme-settings">{accessToken}:{userRole}:{userID}</div>,
+      ({ accessToken, userRole, userID }: { accessToken: string | null; userRole: string; userID: string | null }) => (
+        <div data-testid="ui-theme-settings">
+          {accessToken}:{userRole}:{userID}
+        </div>
+      ),
     ),
   };
 });

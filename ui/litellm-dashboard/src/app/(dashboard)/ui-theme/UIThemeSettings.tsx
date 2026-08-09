@@ -135,9 +135,7 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
                 setLogoUrl(event.target.value || null);
               }}
             />
-            <p className="mt-1 text-xs text-muted-foreground">
-              输入自定义 Logo 地址，留空则使用默认 Logo
-            </p>
+            <p className="mt-1 text-xs text-muted-foreground">输入自定义 Logo 地址，留空则使用默认 Logo</p>
           </div>
           <div>
             <Label htmlFor="ui-theme-favicon-url" className="mb-2">
@@ -152,9 +150,7 @@ const UIThemeSettings: React.FC<UIThemeSettingsProps> = ({ userID, userRole, acc
                 setFaviconUrl(event.target.value || null);
               }}
             />
-            <p className="mt-1 text-xs text-muted-foreground">
-              输入 .ico、.png 或 .svg 图标地址，留空则使用默认图标
-            </p>
+            <p className="mt-1 text-xs text-muted-foreground">输入 .ico、.png 或 .svg 图标地址，留空则使用默认图标</p>
           </div>
           <div className="flex gap-3 pt-4">
             <Button onClick={handleSave} disabled={loading}>

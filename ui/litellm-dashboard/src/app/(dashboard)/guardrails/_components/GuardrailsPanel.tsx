@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/cva.config";
 import AddGuardrailForm from "./add_guardrail_form";
 import GuardrailTable from "./guardrail_table";
-import { isAdminRole } from "@/utils/roles";
+import { isWritableAdminRole } from "@/utils/roles";
 import GuardrailInfoView from "./guardrail_info";
 import GuardrailTestPlayground from "./GuardrailTestPlayground";
 import NotificationsManager from "@/components/molecules/notifications_manager";
@@ -41,7 +41,7 @@ const GuardrailsPanel: React.FC<GuardrailsPanelProps> = ({ accessToken, userRole
   const [guardrailToDelete, setGuardrailToDelete] = useState<Guardrail | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedGuardrailId, setSelectedGuardrailId] = useState<string | null>(null);
-  const isAdmin = userRole ? isAdminRole(userRole) : false;
+  const isAdmin = userRole ? isWritableAdminRole(userRole) : false;
 
   const fetchGuardrails = async () => {
     if (!accessToken) {
