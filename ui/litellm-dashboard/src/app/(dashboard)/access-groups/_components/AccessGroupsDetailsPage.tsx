@@ -1,4 +1,5 @@
 import { useAccessGroupDetails } from "@/app/(dashboard)/hooks/accessGroups/useAccessGroupDetails";
+import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { ArrowLeftIcon, BotIcon, EditIcon, KeyIcon, LayersIcon, ServerIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 import DefaultProxyAdminTag from "@/components/common_components/DefaultProxyAdminTag";
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UiLoadingSpinner } from "@/components/ui/ui-loading-spinner";
+import { isProxyAdminRole } from "@/utils/roles";
 import { AccessGroupEditModal } from "./AccessGroupsModal/AccessGroupEditModal";
 
 interface AccessGroupDetailProps {
@@ -35,6 +37,9 @@ function ResourceList({ ids, emptyMessage }: { ids: string[]; emptyMessage: stri
 }
 
 export function AccessGroupDetail({ accessGroupId, onBack }: AccessGroupDetailProps) {
+  const { userRole } = useAuthorized();
+  // Admin Viewer follows the read-parity rule: see access groups, no writes.
+  const canModify = isProxyAdminRole(userRole ?? "");
   const { data: accessGroup, isLoading } = useAccessGroupDetails(accessGroupId);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [showAllKeys, setShowAllKeys] = useState(false);
@@ -85,10 +90,12 @@ export function AccessGroupDetail({ accessGroupId, onBack }: AccessGroupDetailPr
             </div>
           </div>
         </div>
-        <Button onClick={() => setIsEditModalVisible(true)}>
-          <EditIcon className="size-4" />
-          Edit Access Group
-        </Button>
+        {canModify ? (
+          <Button onClick={() => setIsEditModalVisible(true)}>
+            <EditIcon className="size-4" />
+            Edit Access Group
+          </Button>
+        ) : null}
       </div>
 
       <Card className="mb-6">
@@ -218,11 +225,13 @@ export function AccessGroupDetail({ accessGroupId, onBack }: AccessGroupDetailPr
         </CardContent>
       </Card>
 
-      <AccessGroupEditModal
-        visible={isEditModalVisible}
-        accessGroup={accessGroup}
-        onCancel={() => setIsEditModalVisible(false)}
-      />
+      {canModify ? (
+        <AccessGroupEditModal
+          visible={isEditModalVisible}
+          accessGroup={accessGroup}
+          onCancel={() => setIsEditModalVisible(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../../../../../tests/test-utils";
 import { AccessGroupDetail } from "./AccessGroupsDetailsPage";
 
+const mockUseAuthorized = vi.fn();
+
 vi.mock("@/app/(dashboard)/hooks/accessGroups/useAccessGroupDetails");
+vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
+  default: () => mockUseAuthorized(),
+}));
 vi.mock("./AccessGroupsModal/AccessGroupEditModal", () => ({
   AccessGroupEditModal: ({ visible, onCancel }: { visible: boolean; onCancel: () => void }) =>
     visible ? (
@@ -66,6 +71,7 @@ describe("AccessGroupDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseAuthorized.mockReturnValue({ userRole: "Admin", accessToken: "sk-test" });
     mockUseAccessGroupDetails.mockReturnValue({
       ...baseMockReturnValue,
       data: createMockAccessGroup(),
@@ -148,6 +154,15 @@ describe("AccessGroupDetail", () => {
     await user.click(editButton);
 
     expect(screen.getByRole("dialog", { name: "Edit Access Group" })).toBeInTheDocument();
+  });
+
+  it("hides the Edit Access Group button for a non-admin", () => {
+    mockUseAuthorized.mockReturnValue({ userRole: "Admin Viewer", accessToken: "sk-test" });
+    renderWithProviders(<AccessGroupDetail accessGroupId={accessGroupId} onBack={mockOnBack} />);
+
+    expect(screen.queryByRole("button", { name: /Edit Access Group/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit Access Group" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Test Group" })).toBeInTheDocument();
   });
 
   it("should close edit modal when Close Modal is clicked", async () => {

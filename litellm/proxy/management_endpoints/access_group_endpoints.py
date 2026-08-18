@@ -31,6 +31,36 @@ router = APIRouter(
 )
 
 
+_ACCESS_GROUP_SCHEMA_ERROR_MARKERS = (
+    "p2021",  # Prisma: table does not exist
+    "p2022",  # Prisma: column does not exist
+    'relation "litellm_accessgrouptable" does not exist',
+    'column "access_model_names" does not exist',
+)
+
+
+def _is_access_group_schema_error(error: Exception) -> bool:
+    """Return True when Prisma reports an unapplied access-group migration."""
+    error_message = str(error).lower()
+    return any(marker in error_message for marker in _ACCESS_GROUP_SCHEMA_ERROR_MARKERS)
+
+
+def _raise_access_group_schema_unavailable(error: Exception) -> None:
+    if not _is_access_group_schema_error(error):
+        return
+
+    verbose_proxy_logger.exception(
+        "Access group database schema is unavailable. Run the LiteLLM Prisma migrations before using /v1/access_group."
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": "Access group database schema is not ready",
+            "action": "Run the LiteLLM Prisma migrations and restart the proxy.",
+        },
+    ) from error
+
+
 def _require_proxy_admin(user_api_key_dict: UserAPIKeyAuth) -> None:
     if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
         raise HTTPException(
@@ -318,6 +348,7 @@ async def create_access_group(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Access group '{data.access_group_name}' already exists",
             )
+        _raise_access_group_schema_unavailable(e)
         raise
 
     from litellm.proxy.proxy_server import proxy_logging_obj, user_api_key_cache

@@ -258,6 +258,33 @@ def test_create_access_group_validation_missing_name(client_and_mocks):
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "P2021: The table `public.LiteLLM_AccessGroupTable` does not exist",
+        "P2022: The column `LiteLLM_AccessGroupTable.access_model_names` does not exist",
+        'relation "LiteLLM_AccessGroupTable" does not exist',
+        'column "access_model_names" does not exist',
+    ],
+)
+def test_create_access_group_schema_error_returns_503(
+    client_and_mocks, error_message
+):
+    """Partially-applied access-group migrations return an actionable 503."""
+    client, _, mock_table, *_ = client_and_mocks
+    mock_table.find_unique = AsyncMock(side_effect=Exception(error_message))
+
+    resp = client.post(
+        "/v1/access_group", json={"access_group_name": "test-group"}
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == {
+        "error": "Access group database schema is not ready",
+        "action": "Run the LiteLLM Prisma migrations and restart the proxy.",
+    }
+
+
 def test_create_access_group_500_on_non_constraint_prisma_error(client_and_mocks):
     """Create with non-unique-constraint Prisma error returns 500."""
     client, _, mock_table, *_ = client_and_mocks
