@@ -936,11 +936,9 @@ class ModelManagementAuthChecks:
         team_obj: Optional[LiteLLM_TeamTable] = None,
         premium_user: bool = False,
     ) -> Literal[True]:
-        if premium_user is False:
-            raise HTTPException(
-                status_code=403,
-                detail={"error": CommonProxyErrors.not_premium_user.value},
-            )
+        # XHub overlay: associating a model with a team so the same public
+        # model_name can use different providers per team is a core routing
+        # feature, not an enterprise-only BYOK gate.
         if user_api_key_dict.user_role and user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN:
             return True
         elif team_obj is None or not _is_user_team_admin(user_api_key_dict=user_api_key_dict, team_obj=team_obj):
@@ -963,11 +961,6 @@ class ModelManagementAuthChecks:
     ) -> Literal[True]:
         if model_params.model_info is None or model_params.model_info.team_id is None:
             return True
-        if model_params.model_info.team_id is not None and premium_user is not True:
-            raise HTTPException(
-                status_code=403,
-                detail={"error": CommonProxyErrors.not_premium_user.value},
-            )
 
         _existing_team_row = await TeamRepository(prisma_client).table.find_unique(
             where={"team_id": model_params.model_info.team_id}

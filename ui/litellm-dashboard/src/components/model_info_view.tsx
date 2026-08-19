@@ -28,6 +28,7 @@ import AutoRouterConnectionTest from "./add_model/auto_router_connection_test";
 import { AutoRouterTestTarget, buildAutoRouterTestTargets } from "./add_model/build_auto_router_test_targets";
 import CacheControlSettings from "./add_model/cache_control_settings";
 import DeleteResourceModal from "./common_components/DeleteResourceModal";
+import TeamDropdown from "./common_components/team_dropdown";
 import EditAutoRouterModal from "./edit_auto_router/edit_auto_router_modal";
 import ReuseCredentialsModal from "./model_add/reuse_credentials";
 import NotificationsManager from "./molecules/notifications_manager";
@@ -415,6 +416,18 @@ export default function ModelInfoView({
             access_groups: values.model_access_group,
           };
         }
+        // Associate this deployment with a team (same public model, different vendor)
+        if (values.team_id) {
+          updatedModelInfo = {
+            ...updatedModelInfo,
+            team_id: values.team_id,
+          };
+        } else if (form.isFieldTouched("team_id")) {
+          updatedModelInfo = {
+            ...updatedModelInfo,
+            team_id: undefined,
+          };
+        }
         // Override health_check_model from the form
         if (values.health_check_model !== undefined) {
           updatedModelInfo = {
@@ -781,6 +794,7 @@ export default function ModelInfoView({
                     model_access_group: Array.isArray(localModelData.model_info?.access_groups)
                       ? localModelData.model_info.access_groups
                       : [],
+                    team_id: localModelData.model_info?.team_id || undefined,
                     guardrails: Array.isArray(localModelData.litellm_params?.guardrails)
                       ? localModelData.litellm_params.guardrails
                       : [],
@@ -1369,10 +1383,20 @@ export default function ModelInfoView({
                         )}
                       </div>
                       <div>
-                        <Text className="font-medium">Team ID</Text>
-                        <div className="mt-1 p-2 bg-gray-50 rounded-sm">
-                          {modelData.model_info.team_id || "Not Set"}
-                        </div>
+                        <Text className="font-medium">Associate with Team</Text>
+                        {isEditing ? (
+                          <Form.Item
+                            name="team_id"
+                            className="mb-0"
+                            tooltip="Bind this model+provider deployment to a team so the same public model name can use different vendors for different teams."
+                          >
+                            <TeamDropdown />
+                          </Form.Item>
+                        ) : (
+                          <div className="mt-1 p-2 bg-gray-50 rounded-sm">
+                            {modelData.model_info.team_id || "Not Set"}
+                          </div>
+                        )}
                       </div>
                     </div>
 

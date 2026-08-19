@@ -21,6 +21,15 @@ vi.mock("./molecules/notifications_manager", () => ({
   },
 }));
 
+vi.mock("./common_components/team_dropdown", () => ({
+  default: ({ value, onChange }: { value?: string; onChange?: (value: string) => void }) => (
+    <select data-testid="team-dropdown" value={value || ""} onChange={(event) => onChange?.(event.target.value)}>
+      <option value="">None</option>
+      <option value="team-1">Test Team</option>
+    </select>
+  ),
+}));
+
 vi.mock("./networking", () => ({
   modelInfoV1Call: vi.fn(),
   credentialGetCall: vi.fn(),

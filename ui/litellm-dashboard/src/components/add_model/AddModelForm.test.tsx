@@ -187,9 +187,9 @@ describe("AddModelForm", () => {
     expect(await screen.findByRole("heading", { name: "Add Model" })).toBeInTheDocument();
   });
 
-  it("should show proxy admin only (not team admin) - should not see Select Team dropdown unless switch is toggled", async () => {
+  it("should show proxy admin an optional team association field without a Team-BYOK switch", async () => {
     const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", false));
 
     const props = createTestProps("proxy_admin", "user-1", false);
 
@@ -198,21 +198,14 @@ describe("AddModelForm", () => {
     await screen.findByText("Provider");
 
     expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
-
-    const teamSwitch = screen.getByRole("switch");
-    expect(teamSwitch).toBeInTheDocument();
-
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
-
-    await userEvent.click(teamSwitch);
-
-    expect(await screen.findByText("Select Team")).toBeInTheDocument();
+    expect(screen.queryByText("Team-BYOK Model")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(await screen.findByText("Associate with Team")).toBeInTheDocument();
   });
 
-  it("should show proxy admin who is also team admin - should not see Select Team dropdown unless switch is toggled", async () => {
+  it("should show proxy admin who is also team admin the optional team association field", async () => {
     const mockUseAuthorized = vi.mocked(await import("@/app/(dashboard)/hooks/useAuthorized"));
-    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", true));
+    mockUseAuthorized.default.mockReturnValue(mockAuthorizedUser("proxy_admin", "user-1", false));
 
     const props = createTestProps("proxy_admin", "user-1", true);
 
@@ -221,16 +214,9 @@ describe("AddModelForm", () => {
     await screen.findByText("Provider");
 
     expect(screen.queryByText("Team Selection Required")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
-
-    const teamSwitch = screen.getByRole("switch");
-    expect(teamSwitch).toBeInTheDocument();
-
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
-
-    await userEvent.click(teamSwitch);
-
-    expect(await screen.findByText("Select Team")).toBeInTheDocument();
+    expect(screen.queryByText("Team-BYOK Model")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(await screen.findByText("Associate with Team")).toBeInTheDocument();
   });
 
   it("should show team admin (not proxy admin) - should see alert and team select, must select team before seeing remaining fields", async () => {

@@ -119,6 +119,11 @@ const TEXT_TRANSLATIONS: Record<string, string> = {
   "Attached Keys": "已关联密钥",
   "Attached Teams": "已关联团队",
   "MCP Servers": "MCP 服务器",
+  "Associate with Team": "关联团队",
+  "Optional. Bind this model+provider deployment to a team so the same public model name can use different vendors for different teams.":
+    "可选。将此模型与供应商部署绑定到团队，使同一公开模型名可在不同团队使用不同供应商。",
+  "Bind this model+provider deployment to a team so the same public model name can use different vendors for different teams.":
+    "将此模型与供应商部署绑定到团队，使同一公开模型名可在不同团队使用不同供应商。",
   "Create Group": "创建访问组",
   "Group Details": "访问组详情",
   "General Info": "基本信息",

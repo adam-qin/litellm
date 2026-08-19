@@ -9594,9 +9594,15 @@ class Router:
             # Fallback: check by internal model_name for non-team deployments
             # or deployments that haven't been migrated to team_public_model_name yet
             model_team_id = (model.get("model_info") or {}).get("team_id")
+            has_team_specific_override = team_id is not None and (
+                team_id,
+                model_name,
+            ) in self.team_model_to_deployment_indices
             if (
                 team_id is None  # requester has no team constraint
-                or model_team_id is None  # global deployment - accessible to all teams
+                or (
+                    model_team_id is None and not has_team_specific_override
+                )  # global, unless this team already has a dedicated override
                 or model_team_id == team_id  # deployment belongs to requester's team
             ):
                 return True

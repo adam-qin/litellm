@@ -2,7 +2,7 @@ import { useProviderFields } from "@/app/(dashboard)/hooks/providers/useProvider
 import { useGuardrails } from "@/app/(dashboard)/hooks/guardrails/useGuardrails";
 import { useTags } from "@/app/(dashboard)/hooks/tags/useTags";
 import { all_admin_roles, isUserTeamAdminForAnyTeam } from "@/utils/roles";
-import { Switch, Text } from "@tremor/react";
+import { Text } from "@tremor/react";
 import type { FormInstance } from "antd";
 import { Select as AntdSelect, Button, Card, Col, Form, Modal, Row, Tooltip, Typography, Alert } from "antd";
 import type { UploadProps } from "antd/es/upload";
@@ -57,7 +57,7 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
   // Using a unique ID to force the ConnectionErrorDisplay to remount and run a fresh test
   const [connectionTestId, setConnectionTestId] = useState<string>("");
 
-  const { accessToken, userRole, premiumUser, userId } = useAuthorized();
+  const { accessToken, userRole, userId } = useAuthorized();
   const {
     data: providerMetadata,
     isLoading: isProviderMetadataLoading,
@@ -73,7 +73,6 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
     setIsResultModalVisible(true);
   };
 
-  const [isTeamOnly, setIsTeamOnly] = useState<boolean>(false);
   const [modelAccessGroups, setModelAccessGroups] = useState<string[]>([]);
   // Team admin specific state
   const [teamAdminSelectedTeam, setTeamAdminSelectedTeam] = useState<string | null>(null);
@@ -277,50 +276,15 @@ const AddModelForm: React.FC<AddModelFormProps> = ({
                   <span className="px-4 text-gray-500 text-sm">Additional Model Info Settings</span>
                   <div className="grow border-t border-gray-200"></div>
                 </div>
-                {/* Team-only Model Switch - Only show for proxy admins, not team admins */}
+                {/* Team association - lets the same public model_name use different providers per team */}
                 {(isAdmin || !isTeamAdmin) && (
                   <Form.Item
-                    label="Team-BYOK Model"
-                    tooltip="Only use this model + credential combination for this team. Useful when teams want to onboard their own OpenAI keys."
-                    className="mb-4"
-                  >
-                    <Tooltip
-                      title={
-                        !premiumUser
-                          ? "This is an enterprise-only feature. Upgrade to premium to restrict model+credential combinations to a specific team."
-                          : ""
-                      }
-                      placement="top"
-                    >
-                      <Switch
-                        checked={isTeamOnly}
-                        onChange={(checked) => {
-                          setIsTeamOnly(checked);
-                          if (!checked) {
-                            form.setFieldValue("team_id", undefined);
-                          }
-                        }}
-                        disabled={!premiumUser}
-                      />
-                    </Tooltip>
-                  </Form.Item>
-                )}
-
-                {/* Conditional Team Selection */}
-                {isTeamOnly && (isAdmin || !isTeamAdmin) && (
-                  <Form.Item
-                    label="Select Team"
+                    label="Associate with Team"
                     name="team_id"
                     className="mb-4"
-                    tooltip="Only keys for this team will be able to call this model."
-                    rules={[
-                      {
-                        required: isTeamOnly && !isAdmin,
-                        message: "Please select a team.",
-                      },
-                    ]}
+                    tooltip="Optional. Bind this model+provider deployment to a team so the same public model name can use different vendors for different teams."
                   >
-                    <TeamDropdown disabled={!premiumUser} />
+                    <TeamDropdown />
                   </Form.Item>
                 )}
                 {isAdmin && (

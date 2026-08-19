@@ -150,11 +150,9 @@ test.describe("Add Model", () => {
     await expect(tableBody.getByText("claude-haiku-4-5").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("Add team-only model via Team-BYOK toggle and verify it appears with the team", async ({ page, request }) => {
-    // The Team-BYOK switch is gated on `premiumUser` — without a license set
-    // for the proxy under test, the toggle is disabled and this manual-QA
-    // step cannot be exercised.
-    test.skip(!process.env.LITELLM_LICENSE, "LITELLM_LICENSE not set in test env — Team-BYOK switch is disabled");
+  test("Add team-associated model and verify it appears with the team", async ({ page, request }) => {
+    // Team association is a first-class field in XHub and no longer requires
+    // a premium license or a Team-BYOK switch.
 
     // Make the test idempotent across retries and local reruns: delete any
     // Cohere model already scoped to the e2e team before we start, and again
@@ -194,15 +192,12 @@ test.describe("Add Model", () => {
       const apiKeyInput = page.locator('input[type="password"]').first();
       await apiKeyInput.fill("sk-any-key-for-team-byok-test");
 
-      // Flip the Team-BYOK switch on (Form.Item label "Team-BYOK Model")
-      const teamByokRow = page.locator(".ant-form-item", { hasText: "Team-BYOK Model" });
-      await teamByokRow.getByRole("switch").click();
-
-      // The Team dropdown appears underneath once the switch is on. TeamDropdown
-      // renders its Select.Option children with custom <span>/<Text> markup, so
-      // the popup items don't carry role="option" — match by text content,
-      // scoped to the visible dropdown so a stale tag elsewhere in the form
-      // can't satisfy it.
+      // Team association is a first-class field; the Team-BYOK switch is gone.
+      // TeamDropdown renders its Select.Option children with custom <span>/<Text>
+      // markup, so the popup items don't carry role="option" — match by text
+      // content, scoped to the visible dropdown so a stale tag elsewhere in the
+      // form can't satisfy it.
+      await expect(page.getByText("Associate with Team")).toBeVisible({ timeout: 5_000 });
       const teamDropdown = page.getByTestId("team-dropdown");
       await expect(teamDropdown).toBeVisible({ timeout: 5_000 });
       await teamDropdown.click();

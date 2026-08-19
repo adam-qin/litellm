@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Form } from "antd";
 import type { UploadProps } from "antd/es/upload";
@@ -271,7 +271,7 @@ describe("Add Model Tab", () => {
     );
   });
 
-  it("should show team selection when team-only switch is enabled", async () => {
+  it("should show the team association field without a Team-BYOK switch", async () => {
     const props = createTestProps();
     const queryClient = createQueryClient();
 
@@ -296,23 +296,9 @@ describe("Add Model Tab", () => {
       </QueryClientProvider>,
     );
 
-    // Wait for component to load
     await screen.findByText("Provider");
 
-    // Scope to the Team-BYOK Model Form.Item: the Add Auto Router tab, mounted alongside
-    // this one, also renders a "Semantic keyword matching" switch, so a bare
-    // getByRole("switch") would match more than one element.
-    const teamByokFormItem = screen.getByText("Team-BYOK Model").closest(".ant-form-item") as HTMLElement;
-    const teamSwitch = within(teamByokFormItem).getByRole("switch");
-    expect(teamSwitch).toBeInTheDocument();
-
-    // Initially, team selection should not be visible
-    expect(screen.queryByText("Select Team")).not.toBeInTheDocument();
-
-    // Click the switch to enable team-only mode
-    await userEvent.click(teamSwitch!);
-
-    // Now team selection should be visible
-    expect(await screen.findByText("Select Team")).toBeInTheDocument();
+    expect(screen.queryByText("Team-BYOK Model")).not.toBeInTheDocument();
+    expect(await screen.findByText("Associate with Team")).toBeInTheDocument();
   });
 });

@@ -136,15 +136,14 @@ class TestModelManagementAuthChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_can_user_make_team_model_call_non_premium_fails(self):
-        """Test that non-premium users cannot make team model calls"""
-        with pytest.raises(Exception) as exc_info:
-            ModelManagementAuthChecks.can_user_make_team_model_call(
-                team_id="test_team",
-                user_api_key_dict=self.admin_user,
-                premium_user=False,
-            )
-        assert "403" in str(exc_info.value)
+    async def test_can_user_make_team_model_call_non_premium_admin_succeeds(self):
+        """XHub overlay: team-scoped models do not require a premium license."""
+        result = ModelManagementAuthChecks.can_user_make_team_model_call(
+            team_id="test_team",
+            user_api_key_dict=self.admin_user,
+            premium_user=False,
+        )
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_can_user_make_team_model_call_team_admin_success(self):
@@ -184,8 +183,8 @@ class TestModelManagementAuthChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_allow_team_model_action_non_premium_fails(self):
-        """Test team model action fails for non-premium users"""
+    async def test_allow_team_model_action_non_premium_succeeds(self):
+        """XHub overlay: associating a model with a team does not require premium."""
         model_params = Deployment(
             model_name="test_model",
             litellm_params=LiteLLM_Params(model="test_model", team_id="test_team"),
@@ -193,14 +192,13 @@ class TestModelManagementAuthChecks:
         )
         prisma_client = MockPrismaClient(team_exists=True)
 
-        with pytest.raises(Exception) as exc_info:
-            await ModelManagementAuthChecks.allow_team_model_action(
-                model_params=model_params,
-                user_api_key_dict=self.admin_user,
-                prisma_client=prisma_client,
-                premium_user=False,
-            )
-        assert "403" in str(exc_info.value)
+        result = await ModelManagementAuthChecks.allow_team_model_action(
+            model_params=model_params,
+            user_api_key_dict=self.admin_user,
+            prisma_client=prisma_client,
+            premium_user=False,
+        )
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_allow_team_model_action_nonexistent_team_fails(self):
@@ -1119,6 +1117,51 @@ class TestTeamModelSiblingRouting:
             model_name="global-gpt-4o",
             model={"model_name": "global-gpt-4o", "model_info": {}},
             team_id="teamA",
+        )
+
+    def test_team_override_excludes_global_same_public_name(self):
+        """When a team has its own deployment, the global same-name model must not mix in."""
+        import litellm
+
+        team_id = "teamA"
+        public_name = "gpt-4o"
+        router = litellm.Router(
+            model_list=[
+                {
+                    "model_name": f"model_name_{team_id}_uuid1",
+                    "litellm_params": {
+                        "model": "azure/gpt-4o",
+                        "api_key": "team-key",
+                        "api_base": "https://team.openai.azure.com",
+                    },
+                    "model_info": {
+                        "team_id": team_id,
+                        "team_public_model_name": public_name,
+                    },
+                },
+                {
+                    "model_name": public_name,
+                    "litellm_params": {
+                        "model": "openai/gpt-4o",
+                        "api_key": "global-key",
+                    },
+                    "model_info": {},
+                },
+            ],
+        )
+
+        deployments = router._get_all_deployments(
+            model_name=public_name, team_id=team_id
+        )
+        assert len(deployments) == 1
+        assert deployments[0]["litellm_params"]["api_base"] == "https://team.openai.azure.com"
+        assert (
+            router.should_include_deployment(
+                model_name=public_name,
+                model={"model_name": public_name, "model_info": {}},
+                team_id=team_id,
+            )
+            is False
         )
 
 

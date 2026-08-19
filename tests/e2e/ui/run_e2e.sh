@@ -100,9 +100,10 @@ export SERVER_ROOT_PATH=""
 # spec's skip guard reads it). Safe for the rest of the suite — nothing else
 # performs a logout.
 export PROXY_LOGOUT_URL="https://www.example.com"
-# Forward LITELLM_LICENSE if set in the outer env so premium-gated UI flows
-# (e.g. Team-BYOK Model switch) can be exercised. Tests that depend on a
-# premium proxy gate themselves on process.env.LITELLM_LICENSE.
+# Forward LITELLM_LICENSE if set in the outer env so remaining premium-gated
+# UI flows can be exercised. Team association is no longer premium-gated.
+# Tests that depend on a premium proxy gate themselves on
+# process.env.LITELLM_LICENSE.
 export LITELLM_LICENSE="${LITELLM_LICENSE:-}"
 
 # --- Rebuild UI from source ---

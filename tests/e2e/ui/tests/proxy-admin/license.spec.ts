@@ -6,7 +6,7 @@ import { ADMIN_STORAGE_PATH } from "../../constants";
  * Sanity check that LITELLM_LICENSE is being forwarded to the proxy when set
  * in the environment (e.g. CircleCI's `e2e_ui_testing` job). The login JWT's
  * `premium_user` claim is the same value the dashboard reads to enable
- * premium-gated UI surfaces (Team-BYOK switch, etc.), so asserting it here
+ * remaining premium-gated UI surfaces, so asserting it here
  * catches any future regression where the env var stops being plumbed
  * through `run_e2e.sh` / `.circleci/config.yml`.
  *

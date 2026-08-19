@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    image: xhub/litellm:1.93.0
+    image: xhub/litellm:1.95.15
     restart: unless-stopped
     ports:
       - "4000:4000"
