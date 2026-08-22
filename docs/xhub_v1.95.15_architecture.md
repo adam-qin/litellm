@@ -479,3 +479,14 @@ router_settings:
 - 控制 **钱**：key/team `max_budget`，门户提额改的也是这两个
 - 控制 **可用性**：同名多 credentials + cooldown；跨档用 fallbacks
 - 控制 **全球延迟**：OpenResty 选区域 + 就近 provider，不把全球模型送到 HK
+
+## 架构图示
+
+本文档配套的架构图已归档在 `docs/images/`（含 1 张交互式 HTML，需用浏览器打开）：
+
+| 图 | 文件 | 说明 |
+|---|---|---|
+| 网关协议转化调用链 | `images/网关协议转化调用链.png` | 网关分层与 Chat / Responses / Messages 协议转化调用链 |
+| 同名负载与跨模型 fallback | `images/同名负载与跨模型_fallback.html` | 交互式：同名多供应商负载均衡 vs 跨公开模型名 fallback 对比 |
+| 访问组 / TEAM / KEY 权限分层 | `images/访问组_TEAM_KEY_权限分层.png` | Access Group（白名单）、Team overlay（绑供应商）、Virtual Key（models + 预算/限速）三套控制面 |
+| 全球 Master / Slave 部署 | `images/全球_Master_Slave_部署架构.png` | Master（PG/UI/Sub2API/Prometheus）+ 无状态 Slave + OpenResty 全球选区域部署 |
