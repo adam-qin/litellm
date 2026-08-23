@@ -180,12 +180,13 @@ class TestStoreVirtualKeyInSecretManager:
                 new_callable=AsyncMock,
                 return_value={"namespace": "team-a"},
             ):
-                await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
+                result = await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
                     secret_name="backend-prod",
                     secret_token="sk-secret-value",
                     team_id="team-1",
                 )
 
+            assert result == "xhub/keys/backend-prod"
             manager.async_write_secret.assert_awaited_once_with(
                 secret_name="xhub/keys/backend-prod",
                 description=None,

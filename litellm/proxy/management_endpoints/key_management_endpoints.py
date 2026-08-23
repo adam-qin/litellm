@@ -132,6 +132,26 @@ from litellm.types.utils import (
 )
 
 
+def _is_vault_only_key_delivery(user_api_key_dict: UserAPIKeyAuth) -> bool:
+    """Return whether this caller must use opaque, Vault-only key delivery.
+
+    This is deliberately restricted to Proxy Admins using the HashiCorp Vault
+    backend with virtual-key storage enabled. Other secret-manager backends and
+    non-admin callers retain the existing response behavior.
+    """
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN.value:
+        return False
+    if litellm._key_management_system != KeyManagementSystem.HASHICORP_VAULT:
+        return False
+    settings = litellm._key_management_settings
+    if settings is None or settings.store_virtual_keys is not True:
+        return False
+
+    from litellm.secret_managers.hashicorp_secret_manager import HashicorpSecretManager
+
+    return isinstance(litellm.secret_manager_client, HashicorpSecretManager)
+
+
 async def _check_custom_key_allowed(custom_key_value: Optional[str]) -> None:
     """Raise 403 if custom API keys are disabled and a custom key was provided."""
     if custom_key_value is None:
@@ -766,6 +786,15 @@ async def _common_key_generation_helper(
         premium_user=premium_user,
     )
 
+    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    if vault_only_delivery and data.key is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "Proxy Admin custom key values are disabled when Vault-only delivery is enabled."
+            },
+        )
+
     if data.throttle_on_budget_exceeded is True and user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN.value:
         raise HTTPException(
             status_code=403,
@@ -918,7 +947,22 @@ async def _common_key_generation_helper(
             )
             delattr(data, field)
 
+    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    if vault_only_delivery and data.key is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "Proxy Admin custom key values are disabled when Vault-only delivery is enabled."
+            },
+        )
+
     data_json = data.model_dump(exclude_unset=True, exclude_none=True)  # type: ignore
+
+    # Fail closed while the newly generated plaintext key is being persisted to
+    # Vault. The original blocked value is restored only after Vault succeeds.
+    vault_original_blocked = data_json.get("blocked") if vault_only_delivery else None
+    if vault_only_delivery:
+        data_json["blocked"] = True
 
     data_json = handle_key_type(data, data_json)
 
@@ -1015,8 +1059,10 @@ async def _common_key_generation_helper(
         prisma_client=prisma_client,
     )
 
-    # Reject custom key values if disabled by admin
-    await _check_custom_key_allowed(data.key)
+    # Reject custom key values if disabled by admin. Vault-only callers were
+    # rejected above before any generated-key work begins.
+    if not vault_only_delivery:
+        await _check_custom_key_allowed(data.key)
 
     # Validate user-provided key format
     if data.key is not None and not data.key.startswith("sk-"):
@@ -1078,10 +1124,51 @@ async def _common_key_generation_helper(
 
     response["soft_budget"] = data.soft_budget  # include the user-input soft budget in the response
 
+    # Vault-only delivery is synchronous and fail-closed: the database row is
+    # already blocked, so a Vault failure cannot leave an invisible active key.
+    vault_secret_name: Optional[str] = None
+    if vault_only_delivery:
+        plaintext_token = response.get("token")
+        if not isinstance(plaintext_token, str) or not plaintext_token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "Vault-only key delivery could not obtain the generated key."},
+            )
+        try:
+            vault_secret_name = await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
+                secret_name=data.key_alias or f"virtual-key-{response.get('token_id')}",
+                secret_token=plaintext_token,
+                team_id=data.team_id,
+            )
+            if vault_secret_name is None:
+                raise RuntimeError("HashiCorp Vault client is not ready for virtual-key storage")
+        except Exception as e:
+            verbose_proxy_logger.error("Vault-only key delivery failed; key remains blocked: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "Virtual key was blocked because Vault storage failed."},
+            ) from e
+
+        # Restore the caller's requested blocked state only after Vault success.
+        response["blocked"] = vault_original_blocked
+        await VerificationTokenRepository(prisma_client).set_blocked_state(
+            token=response["token_id"],
+            blocked=vault_original_blocked,
+            updated_by=response.get("updated_by"),
+        )
+
     response = GenerateKeyResponse(**response)
+    response.token = response.token_id
 
-    response.token = response.token_id  # remap token to use the hash, and leave the key in the `key` field [TODO]: clean up generate_key_helper_fn to do this
+    if vault_only_delivery:
+        response.key_delivery = "vault"
+        response.vault_secret_name = vault_secret_name
+        response.key = None
+        response.token = response.token_id
 
+    # The hook is still used for safe email/audit side effects. Vault-only
+    # responses contain no plaintext key, and the hook skips a second Vault
+    # write when response.key is None.
     asyncio.create_task(
         KeyManagementEventHooks.async_key_generated_hook(
             data=data,
@@ -4373,8 +4460,18 @@ async def check_encryption_endpoint(
     return {"status": "success", "report": report.as_dict()}
 
 
-async def get_new_token(data: Optional[RegenerateKeyRequest]) -> str:
+async def get_new_token(
+    data: Optional[RegenerateKeyRequest],
+    vault_only_delivery: bool = False,
+) -> str:
     if data and data.new_key is not None:
+        if vault_only_delivery:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "Proxy Admin custom key rotation is disabled when Vault-only delivery is enabled."
+                },
+            )
         # Reject custom key values if disabled by admin
         await _check_custom_key_allowed(data.new_key)
         if not data.new_key.startswith("sk-"):
@@ -4494,7 +4591,8 @@ async def _execute_virtual_key_regeneration(
                 prisma_client=prisma_client,
             )
 
-    new_token = await get_new_token(data=data)
+    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    new_token = await get_new_token(data=data, vault_only_delivery=vault_only_delivery)
     new_token_hash = hash_token(new_token)
     new_token_key_name = abbreviate_api_key(api_key=new_token)
     update_data = {"token": new_token_hash, "key_name": new_token_key_name}
@@ -4511,6 +4609,27 @@ async def _execute_virtual_key_regeneration(
         verbose_proxy_logger.debug("non_default_values: %s", non_default_values)
     update_data.update(non_default_values)
     update_data = prisma_client.jsonify_object(data=update_data)
+
+    vault_secret_name: Optional[str] = None
+    if vault_only_delivery:
+        # Rotate Vault before changing the DB token. If Vault is unavailable,
+        # the old DB key remains the only active credential and the endpoint
+        # returns 503 without publishing an unusable new key.
+        vault_secret_name = await KeyManagementEventHooks._rotate_virtual_key_in_secret_manager(
+            current_secret_name=key_in_db.key_alias or f"virtual-key-{hashed_api_key}",
+            new_secret_name=(
+                non_default_values.get("key_alias")
+                or key_in_db.key_alias
+                or f"virtual-key-{hashed_api_key}"
+            ),
+            new_secret_value=new_token,
+            team_id=getattr(key_in_db, "team_id", None),
+        )
+        if vault_secret_name is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "Virtual key rotation could not update Vault."},
+            )
 
     # If grace period set, insert deprecated key so old key remains valid
     await _insert_deprecated_key(
@@ -4536,6 +4655,13 @@ async def _execute_virtual_key_regeneration(
         )
 
     response = GenerateKeyResponse(**updated_token_dict)
+
+    if vault_only_delivery:
+        response.key_delivery = "vault"
+        response.vault_secret_name = vault_secret_name
+        response.key = None
+        response.token = response.token_id
+
     asyncio.create_task(
         KeyManagementEventHooks.async_key_rotated_hook(
             data=data,

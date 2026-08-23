@@ -364,12 +364,21 @@ class VerificationTokenRepository(BaseRepository[LiteLLM_VerificationToken]):
         """Update the last_active timestamp."""
         return await self.update(token, {"last_active": datetime.utcnow()}, id_field="token")
 
-    async def block_token(self, token: str, updated_by: str | None = None) -> LiteLLM_VerificationToken | None:
-        """Block a token."""
-        data: dict[str, object] = {"blocked": True}
+    async def set_blocked_state(
+        self,
+        token: str,
+        blocked: bool | None,
+        updated_by: str | None = None,
+    ) -> LiteLLM_VerificationToken | None:
+        """Set the nullable blocked state, including restoring it to NULL."""
+        data: dict[str, object] = {"blocked": blocked}
         if updated_by is not None:
             data["updated_by"] = updated_by
         return await self.update(token, data, id_field="token")
+
+    async def block_token(self, token: str, updated_by: str | None = None) -> LiteLLM_VerificationToken | None:
+        """Block a token."""
+        return await self.set_blocked_state(token, True, updated_by=updated_by)
 
     async def unblock_token(self, token: str, updated_by: str | None = None) -> LiteLLM_VerificationToken | None:
         """Unblock a token."""

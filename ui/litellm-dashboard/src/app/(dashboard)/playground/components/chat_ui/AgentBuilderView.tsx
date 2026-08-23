@@ -399,6 +399,10 @@ export default function AgentBuilderView({
       if (keyValue) {
         setCreatedKeyValue(keyValue);
         NotificationsManager.success("Virtual key created. Use it in the curl example below.");
+      } else if (response?.key_delivery === "vault") {
+        NotificationsManager.success(
+          `Virtual key stored in Vault: ${response.vault_secret_name ?? "configured secret path"}`,
+        );
       } else {
         NotificationsManager.fromBackend("Key created but value not returned");
       }

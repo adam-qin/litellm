@@ -58,7 +58,11 @@ const SCIMConfig: React.FC<SCIMConfigProps> = ({ accessToken, userID, proxySetti
 
       const response = await keyCreateCall(accessToken, userID, formData);
       setTokenData(response);
-      NotificationsManager.success("SCIM token created successfully");
+      NotificationsManager.success(
+        response.key_delivery === "vault"
+          ? `SCIM token stored in Vault: ${response.vault_secret_name ?? "configured secret path"}`
+          : "SCIM token created successfully",
+      );
     } catch (error: any) {
       console.error("Error creating SCIM token:", error);
       NotificationsManager.fromBackend("Failed to create SCIM token: " + parseErrorMessage(error));
@@ -155,21 +159,30 @@ const SCIMConfig: React.FC<SCIMConfigProps> = ({ accessToken, userID, proxySetti
                   <ExclamationCircleOutlined className="h-5 w-5 mr-2" />
                   <Title className="text-lg text-yellow-800">Your SCIM Token</Title>
                 </div>
-                <Text className="text-yellow-800 mb-4 font-medium">
-                  Make sure to copy this token now. You will not be able to see it again.
-                </Text>
-                <div className="flex items-center">
-                  <TextInput value={tokenData.key} className="grow mr-2 bg-white" type="password" disabled={true} />
-                  <CopyToClipboard
-                    text={tokenData.key}
-                    onCopy={() => NotificationsManager.success("Token copied to clipboard")}
-                  >
-                    <TremorButton variant="primary" className="flex items-center">
-                      <CopyOutlined className="h-4 w-4 mr-1" />
-                      Copy
-                    </TremorButton>
-                  </CopyToClipboard>
-                </div>
+                {tokenData.key_delivery === "vault" ? (
+                  <Text className="text-yellow-800 mb-4 font-medium">
+                    This token is stored in Vault and is not displayed in the dashboard.
+                    Secret path: {tokenData.vault_secret_name ?? "configured secret path"}
+                  </Text>
+                ) : (
+                  <>
+                    <Text className="text-yellow-800 mb-4 font-medium">
+                      Make sure to copy this token now. You will not be able to see it again.
+                    </Text>
+                    <div className="flex items-center">
+                      <TextInput value={tokenData.key} className="grow mr-2 bg-white" type="password" disabled={true} />
+                      <CopyToClipboard
+                        text={tokenData.key}
+                        onCopy={() => NotificationsManager.success("Token copied to clipboard")}
+                      >
+                        <TremorButton variant="primary" className="flex items-center">
+                          <CopyOutlined className="h-4 w-4 mr-1" />
+                          Copy
+                        </TremorButton>
+                      </CopyToClipboard>
+                    </div>
+                  </>
+                )}
                 <TremorButton className="mt-4 flex items-center" variant="secondary" onClick={() => setTokenData(null)}>
                   <PlusCircleOutlined className="h-4 w-4 mr-1" />
                   Create Another Token

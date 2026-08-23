@@ -577,9 +577,17 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
       // This will trigger a refetch of all key list queries regardless of pagination
       queryClient.invalidateQueries({ queryKey: keyKeys.lists() });
 
-      setApiKey(response["key"]);
+      if (response["key_delivery"] === "vault") {
+        setApiKey(null);
+        setIsModalVisible(false);
+        NotificationsManager.success(
+          `Virtual Key created and stored in Vault: ${response["vault_secret_name"] ?? "configured secret path"}`,
+        );
+      } else {
+        setApiKey(response["key"]);
+        NotificationsManager.success("Virtual Key Created");
+      }
       setSoftBudget(response["soft_budget"]);
-      NotificationsManager.success("Virtual Key Created");
       form.resetFields();
       setBudgetLimits([]);
       setTagRateLimits([]);

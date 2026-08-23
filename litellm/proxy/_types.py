@@ -1126,7 +1126,10 @@ class GenerateKeyRequest(KeyRequestBase):
 
 
 class GenerateKeyResponse(KeyRequestBase):
-    key: str  # type: ignore
+    # Vault-only delivery intentionally omits the plaintext key from the API response.
+    key: Optional[str] = None
+    key_delivery: Literal["response", "vault"] = "response"
+    vault_secret_name: Optional[str] = None
     key_name: Optional[str] = None
     key_type: str | None = None
     expires: Optional[datetime] = None

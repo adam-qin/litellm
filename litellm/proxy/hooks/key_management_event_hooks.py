@@ -46,7 +46,9 @@ class KeyManagementEventHooks:
         )
         from litellm.proxy.proxy_server import litellm_proxy_admin_name
 
-        # Send email notification - non-blocking, independent operation
+        # Send email notification - non-blocking, independent operation. In
+        # Vault-only mode the response is already redacted, so the email can
+        # only contain the Vault path and token metadata.
         if data.send_invite_email is True:
             try:
                 await KeyManagementEventHooks._send_key_created_email(response.model_dump(exclude_none=True))
@@ -76,15 +78,18 @@ class KeyManagementEventHooks:
                 )
             )
 
-        # Store the generated key in the secret manager - non-blocking, independent operation
-        try:
-            await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
-                secret_name=data.key_alias or f"virtual-key-{response.token_id}",
-                secret_token=response.key,
-                team_id=data.team_id,
-            )
-        except Exception as e:
-            verbose_proxy_logger.warning(f"Failed to store virtual key in secret manager: {e}")
+        # Store the generated key in the secret manager - non-blocking,
+        # independent operation. Vault-only callers already completed this
+        # synchronously before the hook and have no plaintext key to persist.
+        if response.key is not None:
+            try:
+                await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
+                    secret_name=data.key_alias or f"virtual-key-{response.token_id}",
+                    secret_token=response.key,
+                    team_id=data.team_id,
+                )
+            except Exception as e:
+                verbose_proxy_logger.warning(f"Failed to store virtual key in secret manager: {e}")
 
     @staticmethod
     async def async_key_updated_hook(
@@ -147,8 +152,10 @@ class KeyManagementEventHooks:
         )
         from litellm.proxy.proxy_server import litellm_proxy_admin_name
 
-        # Store the generated key in the secret manager - non-blocking, independent operation
-        if data is not None and response.token_id is not None:
+        # Store the generated key in the secret manager - non-blocking, independent operation.
+        # Vault-only rotation is completed synchronously by the endpoint and the
+        # redacted response prevents a second write here.
+        if data is not None and response.token_id is not None and response.key is not None:
             try:
                 initial_secret_name = existing_key_row.key_alias or f"virtual-key-{existing_key_row.token}"
                 new_secret_name = response.key_alias or data.key_alias or initial_secret_name
@@ -261,7 +268,9 @@ class KeyManagementEventHooks:
             )
 
     @staticmethod
-    async def _store_virtual_key_in_secret_manager(secret_name: str, secret_token: str, team_id: Optional[str] = None):
+    async def _store_virtual_key_in_secret_manager(
+        secret_name: str, secret_token: str, team_id: Optional[str] = None
+    ) -> Optional[str]:
         """
         Store a virtual key in the secret manager
 
@@ -299,6 +308,9 @@ class KeyManagementEventHooks:
                         secret_name=prefixed_secret_name,
                         result=result,
                     )
+                    return prefixed_secret_name
+
+        return None
 
     @staticmethod
     async def _rotate_virtual_key_in_secret_manager(
@@ -306,7 +318,7 @@ class KeyManagementEventHooks:
         new_secret_name: str,
         new_secret_value: str,
         team_id: Optional[str] = None,
-    ):
+    ) -> Optional[str]:
         """
         Update a virtual key in the secret manager
 
@@ -338,6 +350,9 @@ class KeyManagementEventHooks:
                         secret_name=prefixed_new_name,
                         result=result,
                     )
+                    return prefixed_new_name
+
+        return None
 
     @staticmethod
     def _raise_for_secret_manager_error(
