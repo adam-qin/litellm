@@ -23,6 +23,7 @@ class NewModelGroupRequest(BaseModel):
     access_group: str  # The access group name (e.g., "production-models")
     model_names: Optional[List[str]] = None  # Existing model groups to include - tags ALL deployments for each name
     model_ids: Optional[List[str]] = None  # Specific deployment IDs to tag (more precise than model_names)
+    assigned_team_ids: Optional[List[str]] = None  # Required Team binding for scoped XHub instances
 
 
 class NewModelGroupResponse(BaseModel):
@@ -37,6 +38,7 @@ class UpdateModelGroupRequest(BaseModel):
         None  # Updated list of model groups to include - tags ALL deployments for each name
     )
     model_ids: Optional[List[str]] = None  # Specific deployment IDs to tag (more precise than model_names)
+    assigned_team_ids: Optional[List[str]] = None  # Required Team binding for scoped XHub instances
 
 
 class DeleteModelGroupResponse(BaseModel):

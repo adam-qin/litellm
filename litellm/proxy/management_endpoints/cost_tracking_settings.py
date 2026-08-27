@@ -24,9 +24,10 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.types.utils import LlmProvidersSet
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 def _resolve_model_for_cost_lookup(model: str) -> Tuple[str, Optional[str]]:

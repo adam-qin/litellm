@@ -34,6 +34,15 @@ from litellm.proxy.management_endpoints.common_daily_activity import (
     get_daily_activity,
     get_daily_activity_aggregated,
 )
+from litellm.proxy.common_utils.team_scope import (
+    assert_all_teams_in_scope,
+    assert_team_in_scope,
+    assert_user_teams_in_scope,
+    empty_paginated_users,
+    get_effective_allowed_team_ids,
+    is_team_in_scope,
+    user_teams_has_some_filter,
+)
 from litellm.proxy.management_endpoints.common_utils import (
     _is_user_team_admin,
     _user_has_admin_view,
@@ -471,6 +480,25 @@ async def new_user(
         if teams is None:
             teams = check_if_default_team_set()
         organization_ids = cast(list[str] | None, data_json.pop("organizations", None))
+        requested_team_ids: list[str] = []
+        if data_json.get("team_id"):
+            requested_team_ids.append(data_json["team_id"])
+        if teams:
+            for team in teams:
+                if isinstance(team, str) and team:
+                    requested_team_ids.append(team)
+                else:
+                    team_id = getattr(team, "team_id", None)
+                    if isinstance(team_id, str) and team_id:
+                        requested_team_ids.append(team_id)
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None:
+            if not requested_team_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "team_id/teams is required when XHub Team scope is enabled"},
+                )
+            assert_all_teams_in_scope(requested_team_ids, user_api_key_dict)
 
         response = await generate_key_helper_fn(request_type="user", **data_json)
         # Admin UI Logic
@@ -802,6 +830,12 @@ async def user_info(
                 detail=f"User {user_id} not found",
             )
 
+        user_teams = getattr(user_info, "teams", None)
+        if isinstance(user_info, dict):
+            user_teams = user_info.get("teams")
+        if user_api_key_dict.user_id != user_id:
+            assert_user_teams_in_scope(user_teams, user_api_key_dict)
+
         team_list, teams_1 = await _get_user_info_teams(
             prisma_client=prisma_client,
             user_id=user_id,
@@ -815,6 +849,14 @@ async def user_info(
             table_name="key",
             query_type="find_all",
         )
+
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None:
+            team_list = [team for team in team_list if getattr(team, "team_id", None) in effective]
+            if teams_1 is not None:
+                teams_1 = [team for team in teams_1 if getattr(team, "team_id", None) in effective]
+            if keys is not None:
+                keys = [key for key in keys if getattr(key, "team_id", None) in effective]
 
         response_data = _build_user_info_response(
             user_id=user_id,
@@ -858,7 +900,10 @@ async def _check_user_info_v2_access(
 
     # Rule 1: Proxy admins — fetch and return the target row directly
     if _user_has_admin_view(user_api_key_dict):
-        return await _fetch_target_user()
+        target_user = await _fetch_target_user()
+        if target_user is not None and user_api_key_dict.user_id != target_user.user_id:
+            assert_user_teams_in_scope(target_user.teams, user_api_key_dict)
+        return target_user
 
     # Rule 2: Self-lookup
     if user_api_key_dict.user_id == target_user_id:
@@ -879,6 +924,8 @@ async def _check_user_info_v2_access(
             # Get all teams the caller belongs to
             teams = await TeamRepository(prisma_client).table.find_many(where={"team_id": {"in": caller_user.teams}})
             for team in teams:
+                if not is_team_in_scope(team.team_id, user_api_key_dict):
+                    continue
                 team_obj = LiteLLM_TeamTable(**team.model_dump())
                 if _is_user_team_admin(user_api_key_dict=user_api_key_dict, team_obj=team_obj):
                     # Check if target user is in this team
@@ -993,11 +1040,28 @@ async def _get_user_info_for_proxy_admin(user_api_key_dict: UserAPIKeyAuth):
 
     from litellm.proxy.proxy_server import prisma_client
 
-    sql_query = """
-        SELECT 
-            (SELECT json_agg(t.*) FROM "LiteLLM_TeamTable" t) as teams,
-            (SELECT json_agg(k.*) FROM "LiteLLM_VerificationToken" k WHERE k.team_id != 'litellm-dashboard' OR k.team_id IS NULL) as keys
-    """
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective is not None:
+        scoped_ids = sorted(effective)
+        if not scoped_ids:
+            return UserInfoResponse(
+                user_id=user_api_key_dict.user_id,
+                user_info=None,
+                keys=[],
+                teams=[],
+            )
+        quoted = ",".join("'" + team_id.replace("'", "''") + "'" for team_id in scoped_ids)
+        sql_query = f"""
+            SELECT
+                (SELECT json_agg(t.*) FROM "LiteLLM_TeamTable" t WHERE t.team_id IN ({quoted})) as teams,
+                (SELECT json_agg(k.*) FROM "LiteLLM_VerificationToken" k WHERE k.team_id IN ({quoted})) as keys
+        """
+    else:
+        sql_query = """
+            SELECT 
+                (SELECT json_agg(t.*) FROM "LiteLLM_TeamTable" t) as teams,
+                (SELECT json_agg(k.*) FROM "LiteLLM_VerificationToken" k WHERE k.team_id != 'litellm-dashboard' OR k.team_id IS NULL) as keys
+        """
     if prisma_client is None:
         raise Exception(
             "Database not connected. Connect a database to your proxy - https://docs.litellm.ai/docs/simple_proxy#managing-auth---virtual-keys"
@@ -1173,6 +1237,10 @@ def _check_user_update_authz(
 
     if existing_user_row is not None:
         typed_row = LiteLLM_UserTable(**existing_user_row.model_dump(exclude_none=True))
+        if user_api_key_dict.user_id != typed_row.user_id:
+            assert_user_teams_in_scope(typed_row.teams, user_api_key_dict)
+        if user_request.teams:
+            assert_all_teams_in_scope(user_request.teams, user_api_key_dict)
         if not can_user_call_user_update(user_api_key_dict=user_api_key_dict, user_info=typed_row):
             raise HTTPException(
                 status_code=403,
@@ -1590,6 +1658,11 @@ async def bulk_user_update(
     users_to_update: list[UpdateUserRequest] | list[UpdateUserRequestNoUserIDorEmail] = []
 
     if data.all_users and data.user_updates:
+        if get_effective_allowed_team_ids(user_api_key_dict) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "all_users is not allowed when XHub Team scope is enabled"},
+            )
         # Only proxy admins can update all users at once
         if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN.value:
             raise HTTPException(
@@ -1780,6 +1853,34 @@ def _validate_sort_params(sort_by: str | None, sort_order: str) -> dict[str, str
     return order_by
 
 
+async def _caller_is_in_scope_team_admin(
+    user_api_key_dict: UserAPIKeyAuth,
+    prisma_client: Any,
+) -> bool:
+    """Return True when the caller is admin of at least one in-scope Team."""
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if not effective or not user_api_key_dict.user_id:
+        return False
+    caller_user = await UserRepository(prisma_client).table.find_unique(
+        where={"user_id": user_api_key_dict.user_id}
+    )
+    if caller_user is None or not caller_user.teams:
+        return False
+    in_scope_team_ids = [
+        team_id for team_id in caller_user.teams if isinstance(team_id, str) and team_id in effective
+    ]
+    if not in_scope_team_ids:
+        return False
+    teams = await TeamRepository(prisma_client).table.find_many(
+        where={"team_id": {"in": in_scope_team_ids}}
+    )
+    for team in teams:
+        team_obj = LiteLLM_TeamTable(**team.model_dump())
+        if _is_user_team_admin(user_api_key_dict=user_api_key_dict, team_obj=team_obj):
+            return True
+    return False
+
+
 async def _authorize_user_list_request(
     user_api_key_dict: UserAPIKeyAuth,
     organization_ids: str | None,
@@ -1791,11 +1892,20 @@ async def _authorize_user_list_request(
     Authorize the /user/list request and return the (possibly scoped) organization_ids string.
 
     - Proxy admins: returns organization_ids unchanged (may be None).
-    - Org admins: returns comma-separated org IDs scoped to their allowed orgs.
+    - Org admins (unscoped): returns comma-separated org IDs scoped to their allowed orgs.
+    - Team-scoped instances: only proxy admins and in-scope team admins may list users.
     - Others: raises 403.
     """
     if _user_has_admin_view(user_api_key_dict):
         return organization_ids
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective is not None:
+        if effective and await _caller_is_in_scope_team_admin(user_api_key_dict, prisma_client):
+            return organization_ids
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Only proxy admins and team admins can list users when XHub Team scope is enabled."},
+        )
 
     if user_api_key_dict.user_id is None:
         raise HTTPException(
@@ -1919,6 +2029,12 @@ async def get_users(
         proxy_logging_obj=proxy_logging_obj,
     )
 
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if team is not None:
+        assert_team_in_scope(team, user_api_key_dict)
+    elif effective is not None and not effective:
+        return empty_paginated_users(page=page, page_size=page_size)
+
     # Calculate skip and take for pagination
     skip = (page - 1) * page_size
 
@@ -1950,6 +2066,8 @@ async def get_users(
         where_conditions["teams"] = {
             "has": team  # Array contains for string arrays in Prisma
         }
+    elif effective is not None:
+        where_conditions["teams"] = user_teams_has_some_filter(effective)["teams"]
 
     if sso_user_ids is not None and isinstance(sso_user_ids, str):
         sso_id_list = [sid.strip() for sid in sso_user_ids.split(",") if sid.strip()]
@@ -2109,6 +2227,10 @@ async def delete_user(
                 detail={"error": f"User not found, passed user_id={user_id}"},
             )
 
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None:
+            assert_user_teams_in_scope(user_row.teams, user_api_key_dict)
+
         if not caller_is_proxy_admin:
             target_org_ids = target_org_ids_by_user.get(user_id, set())
             # Org-admin may only delete users whose entire org membership is
@@ -2153,7 +2275,10 @@ async def delete_user(
             )
 
         ## CLEANUP MEMBERS_WITH_ROLES
-        fetch_all_teams = await TeamRepository(prisma_client).table.find_many(where={"team_id": {"in": user_row.teams}})
+        cleanup_team_ids = list(user_row.teams or [])
+        if effective is not None:
+            cleanup_team_ids = [team_id for team_id in cleanup_team_ids if team_id in effective]
+        fetch_all_teams = await TeamRepository(prisma_client).table.find_many(where={"team_id": {"in": cleanup_team_ids}})
         teams_to_update = []
         for team in fetch_all_teams:
             is_member_in_team, new_team_members = _cleanup_members_with_roles(
@@ -2397,6 +2522,8 @@ async def ui_view_users(
         raise HTTPException(status_code=500, detail={"error": "No db connected"})
 
     try:
+        if team_id:
+            assert_team_in_scope(team_id, user_api_key_dict)
         org_filter_ids = await _resolve_org_filter_for_user_search(
             user_api_key_dict=user_api_key_dict,
             team_id=team_id,
@@ -2404,6 +2531,9 @@ async def ui_view_users(
             user_api_key_cache=user_api_key_cache,
             proxy_logging_obj=proxy_logging_obj,
         )
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None and not effective:
+            return []
 
         # Calculate offset for pagination
         skip = (page - 1) * page_size
@@ -2426,6 +2556,8 @@ async def ui_view_users(
         # Apply org filter when scope_user_search_to_org is ON and caller is not proxy admin
         if org_filter_ids is not None:
             where_conditions["organization_memberships"] = {"some": {"organization_id": {"in": org_filter_ids}}}
+        if effective is not None:
+            where_conditions["teams"] = user_teams_has_some_filter(effective)["teams"]
 
         # Query users with pagination and filters
         users: list[BaseModel] | None = await UserRepository(prisma_client).table.find_many(

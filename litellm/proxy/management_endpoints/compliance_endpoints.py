@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.compliance_checks import ComplianceChecker
 from litellm.proxy.management_helpers.utils import management_endpoint_wrapper
 from litellm.types.proxy.compliance_endpoints import (
@@ -18,7 +19,7 @@ from litellm.types.proxy.compliance_endpoints import (
     ComplianceResponse,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 @router.post(

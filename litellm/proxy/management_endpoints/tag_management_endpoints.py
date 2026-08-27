@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from litellm._logging import verbose_proxy_logger
 from litellm.proxy._types import UserAPIKeyAuth, user_api_key_has_admin_view
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.management_endpoints.common_daily_activity import (
     SpendAnalyticsPaginatedResponse,
     get_daily_activity,
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from litellm.proxy.utils import PrismaClient
     from litellm.types.router import Deployment
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 class _TagRecord(Protocol):

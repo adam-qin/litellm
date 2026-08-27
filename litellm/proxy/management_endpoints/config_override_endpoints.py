@@ -30,6 +30,7 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.repositories.table_repositories import ConfigOverridesRepository
 from litellm.types.llms.custom_http import httpxSpecialProvider
 from litellm.types.proxy.management_endpoints.config_overrides import (
@@ -38,7 +39,7 @@ from litellm.types.proxy.management_endpoints.config_overrides import (
 )
 from litellm.types.secret_managers.main import KeyManagementSettings
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 _AUDIT_REDACTED = "***REDACTED***"

@@ -40,7 +40,9 @@ from litellm.types.proxy.management_endpoints.customer_endpoints import (
     UnblockUsersResponse,
 )
 
-router = APIRouter()
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
+
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 def _to_customer_response(record: BaseModel) -> CustomerResponse:

@@ -6,13 +6,18 @@ Endpoints here:
 """
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from litellm._logging import verbose_proxy_logger
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import (
+    assert_all_teams_in_scope,
+    get_effective_allowed_team_ids,
+    is_team_in_scope,
+)
 
 # Clear cache and reload models to pick up the access group changes
 from litellm.proxy.management_endpoints.model_management_endpoints import (
@@ -76,6 +81,7 @@ async def update_deployments_with_access_group(
     model_names: List[str],
     access_group: str,
     prisma_client: PrismaClient,
+    assigned_team_ids: List[str] | None = None,
 ) -> int:
     """
     Update all deployments for the given model names to include the access group.
@@ -110,6 +116,8 @@ async def update_deployments_with_access_group(
         # Update each deployment
         for deployment in deployments:
             model_info = deployment.model_info or {}
+            if assigned_team_ids is not None and model_info.get("team_id") not in assigned_team_ids:
+                continue
 
             # Add access group using helper
             updated_model_info, was_modified = add_access_group_to_deployment(
@@ -136,6 +144,7 @@ async def update_specific_deployments_with_access_group(
     model_ids: List[str],
     access_group: str,
     prisma_client: PrismaClient,
+    assigned_team_ids: List[str] | None = None,
 ) -> int:
     """
     Update specific deployments (by model_id) to include the access group.
@@ -154,6 +163,8 @@ async def update_specific_deployments_with_access_group(
                 detail={"error": f"Deployment with model_id '{model_id}' not found in Database."},
             )
         model_info = deployment.model_info or {}
+        if assigned_team_ids is not None and model_info.get("team_id") not in assigned_team_ids:
+            raise HTTPException(status_code=403, detail={"error": "Deployment belongs to a Team outside the access group scope"})
         updated_model_info, was_modified = add_access_group_to_deployment(
             model_info=model_info,
             access_group=access_group,
@@ -194,6 +205,7 @@ def remove_access_group_from_deployment(model_info: Dict[str, Any], access_group
 
 async def get_all_access_groups_from_db(
     prisma_client: PrismaClient,
+    allowed_team_ids: Optional[Set[str]] = None,
 ) -> Dict[str, AccessGroupInfo]:
     """
     Get all access groups from the database.
@@ -209,6 +221,10 @@ async def get_all_access_groups_from_db(
 
     for deployment in deployments:
         model_info = deployment.model_info or {}
+        if allowed_team_ids is not None:
+            dep_team = model_info.get("team_id")
+            if not isinstance(dep_team, str) or dep_team not in allowed_team_ids:
+                continue
         access_groups = model_info.get("access_groups", [])
         model_name = deployment.model_name
 
@@ -279,6 +295,12 @@ async def create_model_group(
 
     verbose_proxy_logger.debug(f"Creating access group: {data.access_group} with models: {data.model_names}")
 
+    effective_team_ids = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective_team_ids is not None:
+        if not data.assigned_team_ids:
+            raise HTTPException(status_code=400, detail={"error": "assigned_team_ids is required when XHub Team scope is enabled"})
+        assert_all_teams_in_scope(data.assigned_team_ids, user_api_key_dict)
+
     # Validation: Check if access_group is provided
     if not data.access_group or not data.access_group.strip():
         raise HTTPException(
@@ -322,7 +344,10 @@ async def create_model_group(
 
     try:
         # Check if access group already exists
-        existing_access_groups = await get_all_access_groups_from_db(prisma_client=prisma_client)
+        existing_access_groups = await get_all_access_groups_from_db(
+            prisma_client=prisma_client,
+            allowed_team_ids=effective_team_ids,
+        )
 
         if data.access_group in existing_access_groups:
             raise HTTPException(
@@ -339,6 +364,7 @@ async def create_model_group(
                 model_ids=data.model_ids,
                 access_group=data.access_group,
                 prisma_client=prisma_client,
+                assigned_team_ids=data.assigned_team_ids,
             )
         else:
             assert data.model_names is not None
@@ -346,6 +372,7 @@ async def create_model_group(
                 model_names=data.model_names,
                 access_group=data.access_group,
                 prisma_client=prisma_client,
+                assigned_team_ids=data.assigned_team_ids,
             )
 
         await clear_cache()
@@ -403,7 +430,13 @@ async def list_access_groups(
         )
 
     try:
-        access_groups_map = await get_all_access_groups_from_db(prisma_client=prisma_client)
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None and not effective:
+            return ListAccessGroupsResponse(access_groups=[])
+        access_groups_map = await get_all_access_groups_from_db(
+            prisma_client=prisma_client,
+            allowed_team_ids=effective,
+        )
 
         # Sort by access group name
         access_groups_list = sorted(
@@ -458,7 +491,16 @@ async def get_access_group_info(
         )
 
     try:
-        access_groups_map = await get_all_access_groups_from_db(prisma_client=prisma_client)
+        effective = get_effective_allowed_team_ids(user_api_key_dict)
+        if effective is not None and not effective:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": f"Access group '{access_group}' not found"},
+            )
+        access_groups_map = await get_all_access_groups_from_db(
+            prisma_client=prisma_client,
+            allowed_team_ids=effective,
+        )
 
         if access_group not in access_groups_map:
             raise HTTPException(
@@ -527,6 +569,16 @@ async def update_access_group(
 
     verbose_proxy_logger.debug(f"Updating access group: {access_group} with models: {data.model_names}")
 
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    assigned_team_ids = data.assigned_team_ids
+    if effective is not None:
+        if assigned_team_ids:
+            assert_all_teams_in_scope(assigned_team_ids, user_api_key_dict)
+        elif not effective:
+            raise HTTPException(status_code=403, detail="Team is outside this instance's allowed scope")
+        else:
+            assigned_team_ids = sorted(effective)
+
     # Validation: Check that at least one of model_names or model_ids is provided
     has_model_names = data.model_names and len(data.model_names) > 0
     has_model_ids = data.model_ids and len(data.model_ids) > 0
@@ -541,7 +593,10 @@ async def update_access_group(
 
     # Validation: Check if access group exists
     try:
-        access_groups_map = await get_all_access_groups_from_db(prisma_client=prisma_client)
+        access_groups_map = await get_all_access_groups_from_db(
+            prisma_client=prisma_client,
+            allowed_team_ids=effective,
+        )
         if access_group not in access_groups_map:
             raise HTTPException(
                 status_code=404,
@@ -575,6 +630,8 @@ async def update_access_group(
 
         for deployment in all_deployments:
             model_info = deployment.model_info or {}
+            if assigned_team_ids is not None and model_info.get("team_id") not in assigned_team_ids:
+                continue
 
             updated_model_info, was_modified = remove_access_group_from_deployment(
                 model_info=model_info,
@@ -594,6 +651,7 @@ async def update_access_group(
                 model_ids=data.model_ids,
                 access_group=access_group,
                 prisma_client=prisma_client,
+                assigned_team_ids=assigned_team_ids,
             )
         else:
             assert data.model_names is not None
@@ -601,6 +659,7 @@ async def update_access_group(
                 model_names=data.model_names,
                 access_group=access_group,
                 prisma_client=prisma_client,
+                assigned_team_ids=assigned_team_ids,
             )
 
         # Clear cache and reload models to pick up the access group changes
@@ -667,9 +726,19 @@ async def delete_access_group(
 
     verbose_proxy_logger.debug(f"Deleting access group: {access_group}")
 
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective is not None and not effective:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": f"Access group '{access_group}' not found"},
+        )
+
     # Validation: Check if access group exists
     try:
-        access_groups_map = await get_all_access_groups_from_db(prisma_client=prisma_client)
+        access_groups_map = await get_all_access_groups_from_db(
+            prisma_client=prisma_client,
+            allowed_team_ids=effective,
+        )
         if access_group not in access_groups_map:
             raise HTTPException(
                 status_code=404,
@@ -690,6 +759,8 @@ async def delete_access_group(
 
         for deployment in all_deployments:
             model_info = deployment.model_info or {}
+            if effective is not None and model_info.get("team_id") not in effective:
+                continue
 
             updated_model_info, was_modified = remove_access_group_from_deployment(
                 model_info=model_info,

@@ -19,6 +19,7 @@ from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.common_utils.path_utils import safe_join
 from litellm.proxy.guardrails.guardrail_hooks.custom_code.sandbox import (
     build_sandbox_globals,
@@ -51,7 +52,7 @@ from litellm.types.guardrails import (
 
 #### GUARDRAILS ENDPOINTS ####
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 GUARDRAIL_REGISTRY = GuardrailRegistry()
 
 

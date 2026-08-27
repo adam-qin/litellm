@@ -27,6 +27,11 @@ vi.mock("@/app/(dashboard)/hooks/organizations/useOrganizations", () => ({
   useOrganizations: mockUseOrganizations,
 }));
 
+vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
+  useTeams: () => ({ data: [], isLoading: false, error: null }),
+  useAllTeams: () => ({ data: [], isLoading: false, error: null }),
+}));
+
 // Version tag + logout target come from network hooks; keep them inert in unit tests.
 vi.mock("@/app/(dashboard)/hooks/healthReadiness/useHealthReadinessDetails", () => ({
   useHealthReadinessDetails: () => ({ data: undefined }),
@@ -104,6 +109,49 @@ describe("Sidebar (leftnav)", () => {
       group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
     );
     topLevelLabels.forEach((label) => expect(visibleLabels).toContain(label === "系统设置" ? "settings" : label));
+  });
+
+  it("hides global administration groups for Team-scoped instances", () => {
+    const visibleLabels = getVisibleMenuGroups("Admin", false, undefined, true).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+
+    expect(visibleLabels).not.toContain("护栏");
+    expect(visibleLabels).not.toContain("策略");
+    expect(visibleLabels).not.toContain("settings");
+    expect(visibleLabels).toContain("团队");
+    expect(visibleLabels).toContain("内部用户");
+    expect(visibleLabels).toContain("访问组");
+    expect(visibleLabels).not.toContain("预算");
+  });
+
+  it("shows Internal Users to team admins on Team-scoped instances", () => {
+    const visibleLabels = getVisibleMenuGroups("Internal User", false, undefined, true, true).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+
+    expect(visibleLabels).toContain("内部用户");
+    expect(visibleLabels).toContain("虚拟密钥");
+    expect(visibleLabels).not.toContain("预算");
+  });
+
+  it("hides Internal Users from non-admin team members on Team-scoped instances", () => {
+    const visibleLabels = getVisibleMenuGroups("Internal User", false, undefined, true, false).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+
+    expect(visibleLabels).not.toContain("内部用户");
+    expect(visibleLabels).toContain("虚拟密钥");
+  });
+
+  it("keeps all groups visible when Team scope is disabled", () => {
+    const visibleLabels = getVisibleMenuGroups("Admin", false, undefined, false).flatMap((group) =>
+      group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
+    );
+
+    expect(visibleLabels).toContain("settings");
+    expect(visibleLabels).toContain("护栏");
+    expect(visibleLabels).toContain("策略");
   });
 
   it("does not render non-core product menus", () => {

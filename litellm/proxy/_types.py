@@ -2216,11 +2216,37 @@ class CoordinationRedisParams(LiteLLMPydanticObjectBase):
         return any(value is not None for value in (self.host, self.url, self.startup_nodes, self.sentinel_nodes))
 
 
+class XHubTeamScopeConfig(LiteLLMPydanticObjectBase):
+    """Server-side Team boundary for an XHub instance."""
+
+    enabled: bool = Field(False, description="Enable instance-level Team scoping")
+    allowed_team_ids: List[str] = Field(
+        default_factory=list,
+        description="Team IDs that this instance may expose or manage",
+    )
+    team_names: Optional[List[str]] = Field(
+        None,
+        description="Optional display names corresponding to allowed_team_ids",
+    )
+
+    @field_validator("allowed_team_ids")
+    @classmethod
+    def validate_allowed_team_ids(cls, value: List[str]) -> List[str]:
+        cleaned = [team_id.strip() for team_id in value if isinstance(team_id, str) and team_id.strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("xhub_team_scope.allowed_team_ids must not contain duplicates")
+        return cleaned
+
+
 class ConfigGeneralSettings(LiteLLMPydanticObjectBase):
     """
     Documents all the fields supported by `general_settings` in config.yaml
     """
 
+    xhub_team_scope: Optional[XHubTeamScopeConfig] = Field(
+        None,
+        description="Optional instance-level Team allowlist for XHub management UI and APIs",
+    )
     completion_model: Optional[str] = Field(None, description="proxy level default model for all chat completion calls")
     plugins: list[PluginConfig] | None = Field(
         None, description="external services registered as embeddable UI plugins"

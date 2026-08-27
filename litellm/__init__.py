@@ -425,6 +425,9 @@ default_key_max_budget_alert_emails: Optional[Dict[str, list]] = None
 upperbound_key_generate_params: Optional[LiteLLM_UpperboundKeyGenerateParams] = None
 key_generation_settings: Optional["StandardKeyGenerationConfig"] = None
 default_internal_user_params: Optional[Dict] = None
+# Server-side XHub instance Team scope. This is populated from general_settings
+# and must never be populated from request or JWT input.
+xhub_team_scope: Optional[Dict[str, Any]] = None
 default_team_params: Optional[Union[DefaultTeamSSOParams, Dict]] = None
 default_team_settings: Optional[List] = None
 max_user_budget: Optional[float] = None

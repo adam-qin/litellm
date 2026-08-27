@@ -35,6 +35,7 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.utils import invalidate_config_param
 from litellm.repositories.config_repository import ConfigRepository
 from litellm.secret_managers.main import get_secret_str
@@ -44,7 +45,7 @@ from litellm.types.management_endpoints import (
     CoordinationRedisSource,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 _GENERAL_SETTINGS_PARAM_NAME = "general_settings"
 _COORDINATION_REDIS_KEY = "coordination_redis"

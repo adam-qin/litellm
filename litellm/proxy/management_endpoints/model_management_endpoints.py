@@ -38,6 +38,7 @@ from litellm.proxy._types import (
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.proxy.common_utils.encrypt_decrypt_utils import encrypt_value_helper
+from litellm.proxy.common_utils.team_scope import assert_team_in_scope, is_team_scoped_instance
 from litellm.proxy.management_endpoints.common_utils import _is_user_team_admin
 from litellm.proxy.management_endpoints.team_endpoints import (
     _refresh_cached_team,
@@ -939,6 +940,7 @@ class ModelManagementAuthChecks:
         # XHub overlay: associating a model with a team so the same public
         # model_name can use different providers per team is a core routing
         # feature, not an enterprise-only BYOK gate.
+        assert_team_in_scope(team_id, user_api_key_dict)
         if user_api_key_dict.user_role and user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN:
             return True
         elif team_obj is None or not _is_user_team_admin(user_api_key_dict=user_api_key_dict, team_obj=team_obj):
@@ -989,6 +991,9 @@ class ModelManagementAuthChecks:
         premium_user: bool,
         allow_missing_team: bool = False,
     ) -> Literal[True]:
+        team_id = model_params.model_info.team_id if model_params.model_info is not None else None
+        if is_team_scoped_instance():
+            assert_team_in_scope(team_id, user_api_key_dict)
         ## Check team model auth
         if model_params.model_info is not None and model_params.model_info.team_id is not None:
             team_obj_row = await TeamRepository(prisma_client).table.find_unique(

@@ -248,7 +248,9 @@ class UISettings(BaseModel):
 class UISettingsResponse(SettingsResponse):
     """Response model for UI settings"""
 
-    pass
+    # This is a deliberately minimal, non-sensitive deployment capability.
+    # The server-side Team allowlist itself is never returned by this endpoint.
+    is_team_scoped_instance: bool = False
 
 
 # Allowlist of UI settings that can be stored
@@ -1429,12 +1431,18 @@ async def get_ui_settings():
 
     # Build config-like object for schema helper
     config: Dict[str, Any] = {"litellm_settings": {"ui_settings": ui_settings}}
-
-    return await _get_settings_with_schema(
+    result = await _get_settings_with_schema(
         settings_key="ui_settings",
         settings_class=_get_effective_ui_settings_class(),
         config=config,
     )
+
+    # Expose only the boolean capability required for navigation. The actual
+    # Team IDs remain server-side and are enforced by management endpoints.
+    from litellm.proxy.common_utils.team_scope import is_team_scoped_instance
+
+    result["is_team_scoped_instance"] = is_team_scoped_instance()
+    return result
 
 
 @router.patch(

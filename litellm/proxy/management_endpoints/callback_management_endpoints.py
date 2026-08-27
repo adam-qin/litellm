@@ -9,8 +9,9 @@ from fastapi import APIRouter, Depends
 
 from litellm.litellm_core_utils.logging_callback_manager import CallbacksByType
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 @router.get(

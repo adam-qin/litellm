@@ -1,4 +1,5 @@
 import { useOrganizations } from "@/app/(dashboard)/hooks/organizations/useOrganizations";
+import { useTeams } from "@/app/(dashboard)/hooks/teams/useTeams";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { useHealthReadinessDetails } from "@/app/(dashboard)/hooks/healthReadiness/useHealthReadinessDetails";
 import { useLogout } from "@/app/(dashboard)/hooks/useLogout";
@@ -47,6 +48,7 @@ import {
   all_admin_roles,
   internalUserRoles,
   isAdminRole,
+  isUserTeamAdminForAnyTeam,
   rolesAllowedToViewWriteScopedPages,
   rolesWithWriteAccess,
 } from "../utils/roles";
@@ -64,6 +66,7 @@ interface SidebarProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   enabledPagesInternalUsers?: string[] | null;
+  isTeamScopedInstance?: boolean;
 }
 
 interface MenuItem {
@@ -229,6 +232,8 @@ export const getVisibleMenuGroups = (
   userRole: string,
   isOrgAdmin: boolean,
   enabledPagesInternalUsers?: string[] | null,
+  isTeamScopedInstance = false,
+  isTeamAdmin = false,
 ): MenuGroup[] => {
   const isAdmin = isAdminRole(userRole);
   const filterItemsByRole = (items: MenuItem[]): MenuItem[] =>
@@ -236,8 +241,10 @@ export const getVisibleMenuGroups = (
       .map((item) => ({ ...item, children: item.children ? filterItemsByRole(item.children) : undefined }))
       .filter((item) => {
         if (item.children && item.children.length === 0) return false;
+        if (item.key === "budgets" && isTeamScopedInstance) return false;
         if (item.key === "users") {
-          const hasRoleAccess = !item.roles || item.roles.includes(userRole) || isOrgAdmin;
+          const hasRoleAccess =
+            !item.roles || item.roles.includes(userRole) || isOrgAdmin || (isTeamScopedInstance && isTeamAdmin);
           if (!hasRoleAccess) return false;
           if (!isAdmin && enabledPagesInternalUsers != null) return enabledPagesInternalUsers.includes(item.page);
           return true;
@@ -255,6 +262,7 @@ export const getVisibleMenuGroups = (
 
   return menuGroups
     .filter((group) => !group.roles || group.roles.includes(userRole))
+    .filter((group) => !isTeamScopedInstance || !["安全合规", "系统设置"].includes(group.groupLabel))
     .map((group) => ({ groupLabel: group.groupLabel, items: filterItemsByRole(group.items) }))
     .filter((group) => group.items.length > 0);
 };
@@ -293,9 +301,11 @@ const Sidebar_: React.FC<SidebarProps> = ({
   collapsed = false,
   onToggleCollapsed,
   enabledPagesInternalUsers,
+  isTeamScopedInstance = false,
 }) => {
   const { userId, accessToken, userRole } = useAuthorized();
   const { data: organizations } = useOrganizations();
+  const { data: callerTeams } = useTeams();
   const { logoUrl } = useTheme();
   const { data: healthData } = useHealthReadinessDetails(accessToken);
   const logout = useLogout(accessToken);
@@ -328,7 +338,18 @@ const Sidebar_: React.FC<SidebarProps> = ({
     );
   }, [userId, organizations]);
 
-  const visibleGroups = getVisibleMenuGroups(userRole, isOrgAdmin, enabledPagesInternalUsers);
+  const isTeamAdmin = useMemo(
+    () => Boolean(userId && isUserTeamAdminForAnyTeam((callerTeams as any) ?? null, userId)),
+    [userId, callerTeams],
+  );
+
+  const visibleGroups = getVisibleMenuGroups(
+    userRole,
+    isOrgAdmin,
+    enabledPagesInternalUsers,
+    isTeamScopedInstance,
+    isTeamAdmin,
+  );
 
   const toggleGroup = (key: string) => {
     if (collapsed) {

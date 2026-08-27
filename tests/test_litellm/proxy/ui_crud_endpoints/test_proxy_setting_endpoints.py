@@ -1265,6 +1265,48 @@ class TestProxySettingEndpoints:
         mock_prisma.db.litellm_uisettings.find_unique.assert_called_once_with(
             where={"id": "ui_settings"}
         )
+        assert data["is_team_scoped_instance"] is False
+        assert "allowed_team_ids" not in data
+        assert "team_names" not in data
+
+    def test_get_ui_settings_team_scoped_capability_does_not_leak_allowlist(
+        self, mock_auth, monkeypatch
+    ):
+        """Team-scoped UI only receives a boolean capability, never Team IDs."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        import litellm
+
+        mock_prisma = MagicMock()
+        mock_prisma.db.litellm_uisettings.find_unique = AsyncMock(return_value=None)
+        monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma)
+        original_scope = getattr(litellm, "xhub_team_scope", None)
+        monkeypatch.setattr(
+            litellm,
+            "xhub_team_scope",
+            {
+                "enabled": True,
+                "allowed_team_ids": ["team-a", "team-b"],
+                "team_names": ["Alpha", "Beta"],
+            },
+        )
+
+        try:
+            response = client.get("/get/ui_settings")
+        finally:
+            litellm.xhub_team_scope = original_scope
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_team_scoped_instance"] is True
+        serialized = json.dumps(data)
+        assert "allowed_team_ids" not in data
+        assert "team_names" not in data
+        assert "team-a" not in serialized
+        assert "team-b" not in serialized
+        assert "Alpha" not in serialized
+        assert "values" in data
+        assert "field_schema" in data
 
     def test_get_ui_settings_schema_description_preserved_with_extensions(
         self, mock_auth, monkeypatch

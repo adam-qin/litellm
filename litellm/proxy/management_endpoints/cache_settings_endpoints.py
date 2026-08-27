@@ -28,6 +28,7 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.db.exception_handler import call_with_db_reconnect_retry
 from litellm.repositories.table_repositories import CacheConfigRepository
 from litellm.types.management_endpoints import (
@@ -36,7 +37,7 @@ from litellm.types.management_endpoints import (
     CacheSettingsField,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 # Cache fields holding credentials. Masked on read so plaintext Redis /
 # Sentinel passwords never leave the server in a GET response. `url` is here

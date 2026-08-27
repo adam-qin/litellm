@@ -1,4 +1,4 @@
-from typing import List, Set
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -17,6 +17,14 @@ from litellm.proxy.auth.auth_checks import (
     _get_team_object_from_cache,
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import (
+    assert_access_group_fully_in_scope,
+    assert_access_group_in_scope,
+    assert_all_teams_in_scope,
+    assigned_teams_has_some_filter,
+    filter_assigned_team_ids_for_response,
+    get_effective_allowed_team_ids,
+)
 from litellm.proxy.db.exception_handler import PrismaDBExceptionHandler
 from litellm.proxy.utils import get_prisma_client_or_throw
 from litellm.repositories.table_repositories import AccessGroupRepository
@@ -80,7 +88,10 @@ def _require_admin_view(user_api_key_dict: UserAPIKeyAuth) -> None:
         )
 
 
-def _record_to_response(record) -> AccessGroupResponse:
+def _record_to_response(
+    record,
+    allowed_team_ids: Optional[Set[str]] = None,
+) -> AccessGroupResponse:
     return AccessGroupResponse(
         access_group_id=record.access_group_id,
         access_group_name=record.access_group_name,
@@ -88,7 +99,7 @@ def _record_to_response(record) -> AccessGroupResponse:
         access_model_names=record.access_model_names,
         access_mcp_server_ids=record.access_mcp_server_ids,
         access_agent_ids=record.access_agent_ids,
-        assigned_team_ids=record.assigned_team_ids,
+        assigned_team_ids=filter_assigned_team_ids_for_response(record.assigned_team_ids, allowed_team_ids),
         assigned_key_ids=record.assigned_key_ids,
         created_at=record.created_at,
         created_by=record.created_by,
@@ -310,6 +321,14 @@ async def create_access_group(
 ) -> AccessGroupResponse:
     _require_proxy_admin(user_api_key_dict)
     prisma_client = get_prisma_client_or_throw(CommonProxyErrors.db_not_connected_error.value)
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective is not None:
+        if not data.assigned_team_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="assigned_team_ids is required when XHub Team scope is enabled",
+            )
+        assert_all_teams_in_scope(data.assigned_team_ids, user_api_key_dict)
 
     try:
         async with prisma_client.db.tx() as tx:
@@ -367,7 +386,7 @@ async def create_access_group(
         proxy_logging_obj,
     )
 
-    return _record_to_response(record)
+    return _record_to_response(record, effective)
 
 
 @router.get(
@@ -379,9 +398,15 @@ async def list_access_groups(
 ) -> List[AccessGroupResponse]:
     _require_admin_view(user_api_key_dict)
     prisma_client = get_prisma_client_or_throw(CommonProxyErrors.db_not_connected_error.value)
+    effective = get_effective_allowed_team_ids(user_api_key_dict)
+    if effective is not None and not effective:
+        return []
 
-    records = await AccessGroupRepository(prisma_client).table.find_many(order={"created_at": "desc"})
-    return [_record_to_response(r) for r in records]
+    query_kwargs: dict = {"order": {"created_at": "desc"}}
+    if effective is not None:
+        query_kwargs["where"] = assigned_teams_has_some_filter(effective)
+    records = await AccessGroupRepository(prisma_client).table.find_many(**query_kwargs)
+    return [_record_to_response(r, effective) for r in records]
 
 
 @router.get(
@@ -401,7 +426,8 @@ async def get_access_group(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Access group '{access_group_id}' not found",
         )
-    return _record_to_response(record)
+    assert_access_group_in_scope(record.assigned_team_ids, user_api_key_dict)
+    return _record_to_response(record, get_effective_allowed_team_ids(user_api_key_dict))
 
 
 @router.put(
@@ -450,6 +476,16 @@ async def update_access_group(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Access group '{access_group_id}' not found",
                 )
+            assert_access_group_fully_in_scope(existing.assigned_team_ids, user_api_key_dict)
+            if "assigned_team_ids" in update_fields:
+                requested_team_ids = update_fields.get("assigned_team_ids") or []
+                if get_effective_allowed_team_ids(user_api_key_dict) is not None:
+                    if not requested_team_ids:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="assigned_team_ids is required when XHub Team scope is enabled",
+                        )
+                    assert_all_teams_in_scope(requested_team_ids, user_api_key_dict)
 
             old_team_ids: Set[str] = set(existing.assigned_team_ids or [])
             old_key_ids: Set[str] = set(existing.assigned_key_ids or [])
@@ -495,7 +531,7 @@ async def update_access_group(
     await _patch_key_caches_add_access_group(keys_to_add, access_group_id, user_api_key_cache, proxy_logging_obj)
     await _patch_key_caches_remove_access_group(keys_to_remove, access_group_id, user_api_key_cache, proxy_logging_obj)
 
-    return _record_to_response(record)
+    return _record_to_response(record, get_effective_allowed_team_ids(user_api_key_dict))
 
 
 @router.delete(
@@ -520,6 +556,7 @@ async def delete_access_group(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Access group '{access_group_id}' not found",
                 )
+            assert_access_group_fully_in_scope(existing.assigned_team_ids, user_api_key_dict)
 
             # Union of: teams that have this access_group_id in their own access_group_ids
             # AND teams listed in assigned_team_ids (handles out-of-sync data from before this sync was added)

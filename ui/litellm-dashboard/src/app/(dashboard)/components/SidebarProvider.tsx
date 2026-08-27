@@ -20,6 +20,7 @@ const SidebarProvider = ({
 }: SidebarProviderProps) => {
   const { accessToken } = useAuthorized();
   const [enabledPagesInternalUsers, setEnabledPagesInternalUsers] = useState<string[] | null>(null);
+  const [isTeamScopedInstance, setIsTeamScopedInstance] = useState(false);
 
   useEffect(() => {
     const fetchUISettings = async () => {
@@ -30,10 +31,12 @@ const SidebarProvider = ({
       try {
         const settings = await getUISettings(accessToken);
 
-        // API returns 'values' not 'settings'
+        // API returns 'values' not 'settings'. Capability fields are
+        // top-level and intentionally separate from persisted UI settings.
         if (settings?.values?.enabled_ui_pages_internal_users !== undefined) {
           setEnabledPagesInternalUsers(settings.values.enabled_ui_pages_internal_users);
         }
+        setIsTeamScopedInstance(settings?.is_team_scoped_instance === true);
       } catch (error) {
         console.error("[SidebarProvider] Failed to fetch UI settings:", error);
       }
@@ -49,6 +52,7 @@ const SidebarProvider = ({
       collapsed={sidebarCollapsed}
       onToggleCollapsed={onToggleCollapsed}
       enabledPagesInternalUsers={enabledPagesInternalUsers}
+      isTeamScopedInstance={isTeamScopedInstance}
     />
   );
 };

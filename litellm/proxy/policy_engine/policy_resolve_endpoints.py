@@ -14,6 +14,7 @@ from litellm.constants import MAX_POLICY_ESTIMATE_IMPACT_ROWS
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.auth.route_checks import RouteChecks
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.common_utils.team_scope import assert_system_endpoint_disabled_when_scoped
 from litellm.proxy.policy_engine.attachment_registry import get_attachment_registry
 from litellm.proxy.policy_engine.policy_registry import get_policy_registry
 from litellm.repositories.team_repository import TeamRepository
@@ -29,7 +30,7 @@ from litellm.types.proxy.policy_engine import (
     PolicyResolveResponse,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(assert_system_endpoint_disabled_when_scoped)])
 
 
 def _build_alias_where(field: str, patterns: list) -> dict:

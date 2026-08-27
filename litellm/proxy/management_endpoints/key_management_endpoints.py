@@ -60,6 +60,12 @@ from litellm.proxy.common_utils.callback_utils import (
     decrypt_callback_vars,
     encrypt_callback_vars,
 )
+from litellm.proxy.common_utils.team_scope import (
+    assert_existing_key_in_scope,
+    assert_team_in_scope,
+    get_effective_allowed_team_ids,
+    is_team_in_scope,
+)
 from litellm.proxy.common_utils.rbac_utils import check_org_admin_can_generate_keys
 from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
 from litellm.proxy.common_utils.user_api_key_cache import UserApiKeyCache
@@ -1657,6 +1663,13 @@ async def generate_key_fn(
 
         verbose_proxy_logger.debug("entered /key/generate")
 
+        # Team scope is enforced independently of role checks and Vault-only
+        # delivery. A scoped instance never permits a personal/global key.
+        if data.team_id is None:
+            assert_team_in_scope(None, user_api_key_dict)
+        else:
+            assert_team_in_scope(data.team_id, user_api_key_dict)
+
         await check_org_admin_can_generate_keys(user_api_key_dict=user_api_key_dict)
 
         # Validate budget values are not negative and are finite numbers
@@ -2687,6 +2700,11 @@ async def update_key_fn(
             token=data.key,
             prisma_client=prisma_client,
         )
+        assert_team_in_scope(existing_key_row.team_id, user_api_key_dict)
+        if data.team_id is not None:
+            assert_team_in_scope(data.team_id, user_api_key_dict)
+        elif getattr(existing_key_row, "team_id", None) is None:
+            assert_team_in_scope(None, user_api_key_dict)
 
         await _validate_update_key_data(
             data=data,
@@ -3034,6 +3052,8 @@ async def bulk_update_team_keys(
             status_code=400,
             detail={"error": "team_id is required"},
         )
+
+    assert_team_in_scope(data.team_id, user_api_key_dict)
 
     MAX_BATCH_SIZE = 500
     if data.key_ids is not None and len(data.key_ids) > MAX_BATCH_SIZE:
@@ -3470,6 +3490,8 @@ async def info_key_fn_v2(
 
         filtered_key_info = []
         for k in key_info:
+            if not is_team_in_scope(getattr(k, "team_id", None), user_api_key_dict):
+                continue
             if not await _can_user_query_key_info(
                 user_api_key_dict=user_api_key_dict,
                 key=k.token,
@@ -3551,6 +3573,7 @@ async def info_key_fn(
                 code=status.HTTP_404_NOT_FOUND,
             )
 
+        assert_existing_key_in_scope(key_info, user_api_key_dict)
         if (
             await _can_user_query_key_info(
                 user_api_key_dict=user_api_key_dict,
@@ -3983,6 +4006,10 @@ async def can_modify_verification_token(
 
     is_team_key = _is_team_key(data=key_info)
 
+    # Instance Team allowlist is a hard boundary, including for Proxy Admin.
+    if not is_team_in_scope(key_info.team_id, user_api_key_dict):
+        return False
+
     # 1. Proxy admin can modify any key
     if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
         return True
@@ -4065,6 +4092,9 @@ async def delete_verification_tokens(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": "No keys found"},
                 )
+
+            for key in _keys_being_deleted:
+                assert_existing_key_in_scope(key, user_api_key_dict)
 
             if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
                 authorized_keys = _keys_being_deleted
@@ -5211,6 +5241,7 @@ async def validate_key_list_check(
                     user_api_key_dict.user_role
                 ),
             )
+        assert_existing_key_in_scope(key_info, user_api_key_dict)
     return complete_user_info
 
 
@@ -5388,6 +5419,9 @@ async def list_keys(
                 detail={"error": "Invalid expires value. Supported: 'active', 'expired'."},
             )
 
+        if team_id is not None:
+            assert_team_in_scope(team_id, user_api_key_dict)
+
         complete_user_info = await validate_key_list_check(
             user_api_key_dict=user_api_key_dict,
             user_id=user_id,
@@ -5447,16 +5481,36 @@ async def list_keys(
         if not user_id and not is_proxy_admin:
             user_id = user_api_key_dict.user_id
 
+        # In a scoped instance, the helper's team filters are still needed for
+        # keys returned without an explicit team_id query parameter. Proxy
+        # Admin visibility is therefore reduced to the configured Team set.
+        effective_team_ids = get_effective_allowed_team_ids(user_api_key_dict)
+        scoped_team_ids: Optional[List[str]] = None
+        if effective_team_ids is not None:
+            if not effective_team_ids:
+                return KeyListResponseObject(
+                    keys=[],
+                    total_count=0,
+                    current_page=page,
+                    total_pages=0,
+                )
+            if admin_team_ids is not None:
+                admin_team_ids = list(set(admin_team_ids) & effective_team_ids)
+            if member_team_ids is not None:
+                member_team_ids = list(set(member_team_ids) & effective_team_ids)
+            if team_id is None:
+                scoped_team_ids = sorted(effective_team_ids)
+
         response = await _list_key_helper(
             prisma_client=prisma_client,
             page=page,
             size=size,
             user_id=user_id,
             team_id=team_id,
+            organization_id=organization_id,
             key_alias=key_alias,
             key_hash=key_hash,
             return_full_object=return_full_object,
-            organization_id=organization_id,
             admin_team_ids=admin_team_ids,
             member_team_ids=member_team_ids,
             include_created_by_keys=include_created_by_keys,
@@ -5469,6 +5523,7 @@ async def list_keys(
             agent_id=agent_id,
             use_substring_matching=use_substring_matching,
             expires_filter=expires if isinstance(expires, str) else None,
+            scoped_team_ids=scoped_team_ids,
         )
 
         verbose_proxy_logger.debug("Successfully prepared response")
@@ -5697,6 +5752,7 @@ def _build_key_filter_conditions(
     agent_id: Optional[str] = None,
     use_substring_matching: bool = False,
     expires_filter: str | None = None,
+    scoped_team_ids: Optional[List[str]] = None,
 ) -> Dict[str, Union[str, Dict[str, Any], List[Dict[str, Any]]]]:
     """Build filter conditions for key listing.
 
@@ -5798,6 +5854,8 @@ def _build_key_filter_conditions(
     # narrow results across all visibility conditions (own keys, team keys, etc.)
     if team_id and isinstance(team_id, str):
         where = {"AND": [where, {"team_id": team_id}]}
+    elif scoped_team_ids:
+        where = {"AND": [where, {"team_id": {"in": scoped_team_ids}}]}
     if project_id:
         where = {"AND": [where, {"project_id": project_id}]}
     if access_group_id:
@@ -5836,6 +5894,7 @@ async def _list_key_helper(
     agent_id: Optional[str] = None,
     use_substring_matching: bool = False,
     expires_filter: str | None = None,
+    scoped_team_ids: Optional[List[str]] = None,
 ) -> KeyListResponseObject:
     """
     Helper function to list keys
@@ -5874,6 +5933,7 @@ async def _list_key_helper(
         agent_id=agent_id,
         use_substring_matching=use_substring_matching,
         expires_filter=expires_filter,
+        scoped_team_ids=scoped_team_ids,
     )
 
     # Calculate skip for pagination
@@ -6022,16 +6082,17 @@ async def _check_key_admin_access(
     Raises HTTPException(403) if the caller is not authorized.
     """
 
-    if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
-        return
-
-    # Look up the target key to find its team
     target_key_row = await VerificationTokenRepository(prisma_client).table.find_unique(where={"token": hashed_token})
     if target_key_row is None:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Key not found: {hashed_token}"},
         )
+
+    assert_existing_key_in_scope(target_key_row, user_api_key_dict)
+
+    if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
+        return
 
     # If the key belongs to a team, check team admin / org admin
     if target_key_row.team_id:
@@ -6376,6 +6437,8 @@ async def _can_user_query_key_info(
     """
     Helper to check if the user has access to the key's info
     """
+    if not is_team_in_scope(getattr(key_info, "team_id", None), user_api_key_dict):
+        return False
     if (
         user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value
         or user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY.value

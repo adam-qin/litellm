@@ -75,6 +75,7 @@ from litellm.proxy._types import (
     ConfigFieldInfo,
     ConfigFieldUpdate,
     ConfigGeneralSettings,
+    XHubTeamScopeConfig,
     ConfigList,
     ConfigYAML,
     CoordinationRedisParams,
@@ -105,6 +106,7 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.common_utils.cache_pydantic_utils import CacheCodec
+from litellm.proxy.common_utils.team_scope import get_effective_allowed_team_ids, is_team_scoped_instance
 from litellm.proxy.common_utils.callback_utils import (
     is_sensitive_callback_key,
     normalize_callback_names,
@@ -4228,6 +4230,15 @@ class ProxyConfig:
 
             config = await self._get_config_from_file(config_file_path=config_file_path)
 
+        # XHub instance scope is deployment-owned configuration. Capture it
+        # before DB-backed config overlays are applied so a UI/DB update cannot
+        # widen the Team boundary of a running instance.
+        file_xhub_team_scope = copy.deepcopy(
+            (config.get("general_settings") or {}).get("xhub_team_scope")
+            if isinstance(config.get("general_settings"), dict)
+            else None
+        )
+
         ## UPDATE CONFIG WITH DB
         if prisma_client is not None and store_model_in_db is True:
             config = await self._update_config_from_db(
@@ -4235,6 +4246,12 @@ class ProxyConfig:
                 prisma_client=prisma_client,
                 store_model_in_db=store_model_in_db,
             )
+
+        if file_xhub_team_scope is not None:
+            config.setdefault("general_settings", {})["xhub_team_scope"] = file_xhub_team_scope
+        elif isinstance(config.get("general_settings"), dict):
+            # A DB overlay cannot introduce or change the instance boundary.
+            config["general_settings"].pop("xhub_team_scope", None)
 
         ## PRINT YAML FOR CONFIRMING IT WORKS
         printed_yaml = copy.deepcopy(config)
@@ -4759,6 +4776,22 @@ class ProxyConfig:
         general_settings = config.get("general_settings", {})
         if general_settings is None:
             general_settings = {}
+
+        # Load and validate the XHub instance Team boundary before any
+        # management endpoint can serve requests.  Keep only validated,
+        # server-owned values in the process state; DB/UI config reloads must
+        # not be able to expand this boundary.
+        xhub_team_scope = general_settings.get("xhub_team_scope")
+        if xhub_team_scope is not None:
+            validated_team_scope = XHubTeamScopeConfig.model_validate(xhub_team_scope)
+            if validated_team_scope.enabled and not validated_team_scope.allowed_team_ids:
+                raise ValueError(
+                    "general_settings.xhub_team_scope.allowed_team_ids must not be empty when enabled"
+                )
+            litellm.xhub_team_scope = validated_team_scope.model_dump(exclude_none=True)
+        else:
+            litellm.xhub_team_scope = None
+
         _enable_hc_routing = False
         _hc_staleness = None
         _hc_ignore_transient = False
@@ -11465,11 +11498,12 @@ async def _get_caller_byok_team_scope(
     """
     if user_api_key_dict is None or prisma_client is None:
         return None
+    instance_scope = get_effective_allowed_team_ids(user_api_key_dict)
     if user_api_key_dict.user_role in (
         LitellmUserRoles.PROXY_ADMIN,
         LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY,
     ):
-        return None
+        return instance_scope
     key_team_scope: set[str] = {user_api_key_dict.team_id} if user_api_key_dict.team_id else set()
     user_id = user_api_key_dict.user_id
     if user_id is None:
@@ -11482,21 +11516,26 @@ async def _get_caller_byok_team_scope(
         )
         return key_team_scope
     if user_row is None:
-        return key_team_scope
-    return key_team_scope | set(user_row.teams or [])
+        caller_scope = key_team_scope
+    else:
+        caller_scope = key_team_scope | set(user_row.teams or [])
+    if instance_scope is None:
+        return caller_scope
+    return instance_scope & caller_scope
 
 
 def _byok_row_outside_caller_teams(model_info_dict: Dict[str, Any], allowed_team_ids: Optional[Set[str]]) -> bool:
-    """Whether a team BYOK row belongs to a team the caller is not a member of.
+    """Whether a model row should be hidden from the caller.
 
-    `team_id` is only set on team BYOK rows; non-team rows fall through
-    unaffected. `allowed_team_ids is None` means no scoping (e.g. admins).
+    `allowed_team_ids is None` means no scoping (unscoped admins).
+    On a Team-scoped instance, rows without `team_id` are global models
+    and must be hidden. Unscoped callers keep seeing those global rows.
     """
     if allowed_team_ids is None:
         return False
     team_id = model_info_dict.get("team_id")
     if team_id is None:
-        return False
+        return is_team_scoped_instance()
     return team_id not in allowed_team_ids
 
 
