@@ -11463,14 +11463,20 @@ async def _get_caller_byok_team_scope(
     must have `model_info.team_id` ∈ that set, otherwise they belong to a
     team the caller is not a member of and must be dropped.
     """
-    if user_api_key_dict is None or prisma_client is None:
+    if user_api_key_dict is None:
         return None
     if user_api_key_dict.user_role in (
         LitellmUserRoles.PROXY_ADMIN,
         LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY,
     ):
         return None
+
+    # A missing database client must not disable Team scoping for ordinary
+    # callers. The key's bound Team is the only scope that can be verified
+    # without a membership lookup; with no bound Team, fail closed.
     key_team_scope: set[str] = {user_api_key_dict.team_id} if user_api_key_dict.team_id else set()
+    if prisma_client is None:
+        return key_team_scope
     user_id = user_api_key_dict.user_id
     if user_id is None:
         return key_team_scope
@@ -13030,30 +13036,102 @@ async def model_info_v1(
     return {"data": all_models}
 
 
+def _normalize_team_model_lookup_names(
+    model_names: List[str],
+    llm_router: Router,
+    allowed_team_ids: Optional[Set[str]],
+) -> List[str]:
+    """Replace authorized Team public aliases with router routing keys.
+
+    ``get_available_models_for_user`` returns the public alias for Team BYOK
+    rows, while ``Router.get_model_group_info`` is indexed by the internal
+    ``model_name_{team_id}_{uuid}`` key.  Resolve only Team IDs already
+    authorized for this caller; never use an unrestricted public-name lookup.
+    """
+    if not model_names or allowed_team_ids is None:
+        return model_names
+
+    public_to_internal: Dict[str, str] = {}
+    team_internal_names: Set[str] = set()
+    team_public_names: Set[str] = set()
+    global_names: Set[str] = set()
+    for deployment in llm_router.model_list or []:
+        if not isinstance(deployment, dict):
+            continue
+        model_info = deployment.get("model_info") or {}
+        internal_name = deployment.get("model_name")
+        public_name = model_info.get("team_public_model_name")
+        team_id = model_info.get("team_id")
+        if (
+            isinstance(team_id, str)
+            and isinstance(internal_name, str)
+            and isinstance(public_name, str)
+            and internal_name.startswith(f"model_name_{team_id}_")
+        ):
+            team_internal_names.add(internal_name)
+            team_public_names.add(public_name)
+            if team_id in allowed_team_ids:
+                public_to_internal.setdefault(public_name, internal_name)
+        elif isinstance(internal_name, str):
+            global_names.add(internal_name)
+
+    resolved_names: List[str] = []
+    for name in model_names:
+        if name in team_internal_names:
+            if name in public_to_internal.values():
+                resolved_names.append(name)
+            continue
+        if name in team_public_names:
+            if name in public_to_internal:
+                resolved_names.append(public_to_internal[name])
+            elif name in global_names:
+                resolved_names.append(name)
+            continue
+        resolved_names.append(name)
+
+    return list(dict.fromkeys(resolved_names))
+
+
 def _get_model_group_info(
-    llm_router: Router, all_models_str: List[str], model_group: Optional[str]
+    llm_router: Router,
+    all_models_str: List[str],
+    model_group: Optional[str],
+    general_settings: Optional[Dict[str, Any]] = None,
 ) -> List[ModelGroupInfoProxy]:
+    """Build model-group metadata from the caller's authorized model names.
+
+    Team BYOK deployments use an internal routing key in the router and expose
+    ``team_public_model_name`` to the dashboard.  Always query metadata with
+    the internal key, while matching and returning the public name.  The
+    translator only maps names present in ``all_models_str``, so a colliding
+    public name cannot resolve to an inaccessible team's deployment.
+    """
     model_groups: List[ModelGroupInfoProxy] = []
+    settings = general_settings or {}
+    response_names = dict(
+        TeamModelNameTranslator.listing_entries(
+            model_names=all_models_str,
+            llm_router=llm_router,
+            general_settings=settings,
+        )
+    )
 
-    unique_models = []
-    for model in all_models_str:
-        if model not in unique_models:
-            unique_models.append(model)
-
-    for model in unique_models:
-        if model_group is not None and model_group != model:
+    for response_id, lookup_id in response_names.items():
+        if model_group is not None and model_group != response_id:
             continue
 
-        _model_group_info = llm_router.get_model_group_info(model_group=model)
-
-        if _model_group_info is not None:
-            model_groups.append(ModelGroupInfoProxy(**_model_group_info.model_dump()))
+        model_group_info = llm_router.get_model_group_info(model_group=lookup_id)
+        if model_group_info is not None:
+            response = ModelGroupInfoProxy(**model_group_info.model_dump())
+            response.model_group = response_id
+            model_groups.append(response)
         else:
-            model_group_info = ModelGroupInfoProxy(
-                model_group=model,
-                providers=[],
+            model_groups.append(
+                ModelGroupInfoProxy(
+                    model_group=response_id,
+                    providers=[],
+                )
             )
-            model_groups.append(model_group_info)
 
     ## check for public model groups
     if litellm.public_model_groups is not None:
@@ -13225,8 +13303,10 @@ async def model_group_info(
     """
     global llm_model_list, general_settings, user_config_file_path, proxy_config, llm_router
 
-    # Return empty data array when no models are configured (graceful handling for fresh installs)
-    if llm_model_list is None or llm_router is None or not llm_model_list:
+    # The router is the source of truth once models are loaded from the database.
+    # In STORE_MODEL_IN_DB mode, the legacy global llm_model_list can be empty
+    # even though llm_router already contains usable deployments.
+    if llm_router is None or not llm_router.model_list:
         return {"data": []}
 
     from litellm.proxy.utils import get_available_models_for_user
@@ -13245,8 +13325,91 @@ async def model_group_info(
         return_wildcard_routes=False,
         user_api_key_cache=user_api_key_cache,
     )
+
+    # The generic model-list helper intentionally prioritizes explicit Key
+    # models because it is also used for inference authorization.  The
+    # dashboard management selector needs the caller's already-authorized
+    # models plus the caller's Team/direct-access deployments, but this must
+    # not change the inference helper's semantics.  Build that extra display
+    # set only here and keep it restricted by the existing Team-access helper.
+    if user_api_key_dict.user_role not in (
+        LitellmUserRoles.PROXY_ADMIN,
+        LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY,
+    ):
+        # Database-backed Team/direct-access discovery is optional for this
+        # display endpoint, but Team scoping is not. When Prisma is absent,
+        # skip only the DB expansion and still normalize/filter the router
+        # names using the caller's verifiable key Team.
+        team_and_direct_models = []
+        if prisma_client is not None:
+            try:
+                team_and_direct_models = await get_all_team_and_direct_access_models(
+                    user_api_key_dict=user_api_key_dict,
+                    prisma_client=prisma_client,
+                    llm_router=llm_router,
+                    all_models=copy.deepcopy(llm_router.model_list),
+                )
+            except Exception:
+                # A failed Team lookup must fail closed. Keep the generic
+                # already-authorized list, but never replace it with router-wide
+                # model names as a recovery path.
+                verbose_proxy_logger.exception(
+                    "Failed to resolve Team models for /model_group/info"
+                )
+                team_and_direct_models = []
+
+        display_model_names = [
+            model_name
+            for model_name in (
+                model.get("model_name") for model in team_and_direct_models
+            )
+            if isinstance(model_name, str)
+        ]
+
+        # A Dashboard session may be backed by a Team key (user_id is None).
+        # The generic inference helper returns the key's public allowlist, but
+        # cannot discover the internal routing key from that public name. Add
+        # only deployments belonging to the key's bound Team and allowlist.
+        key_team_id = user_api_key_dict.team_id
+        key_team_models = set(user_api_key_dict.team_models or [])
+        if key_team_id and key_team_models:
+            for deployment in llm_router.model_list:
+                model_info = deployment.get("model_info") or {}
+                if model_info.get("team_id") != key_team_id:
+                    continue
+                internal_name = deployment.get("model_name")
+                public_name = model_info.get("team_public_model_name")
+                if (
+                    internal_name in key_team_models
+                    or public_name in key_team_models
+                    or SpecialModelNames.all_team_models.value in key_team_models
+                ):
+                    if isinstance(internal_name, str):
+                        display_model_names.append(internal_name)
+
+        # DB-derived access is best-effort for this management listing. If a
+        # query fails, retain only the already-authorized generic list; never
+        # fall back to the complete router model list.
+        all_models_str = list(dict.fromkeys([*all_models_str, *display_model_names]))
+
+        # The generic helper may return a Team public alias, but the router
+        # metadata index uses the internal routing key. Resolve aliases only
+        # against the caller's effective Team scope before the metadata lookup.
+        allowed_team_ids = await _get_caller_byok_team_scope(
+            user_api_key_dict=user_api_key_dict,
+            prisma_client=prisma_client,
+        )
+        all_models_str = _normalize_team_model_lookup_names(
+            model_names=all_models_str,
+            llm_router=llm_router,
+            allowed_team_ids=allowed_team_ids,
+        )
+
     model_groups: List[ModelGroupInfoProxy] = _get_model_group_info(
-        llm_router=llm_router, all_models_str=all_models_str, model_group=model_group
+        llm_router=llm_router,
+        all_models_str=all_models_str,
+        model_group=model_group,
+        general_settings=general_settings,
     )
 
     # Append A2A agents to model groups

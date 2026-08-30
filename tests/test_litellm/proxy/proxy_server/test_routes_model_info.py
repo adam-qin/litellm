@@ -292,3 +292,132 @@ def test_model_group_info_invalid_method(client, auth_as, null_router):
         response = client.post("/model_group/info", json={})
     assert response.status_code == 405
     assert len(response.content) > 0
+
+
+def test_model_group_info_uses_router_when_global_model_list_is_empty(
+    client, auth_as, byok_team_router, mock_prisma, monkeypatch
+):
+    """DB-loaded Team deployments remain visible when the legacy list is empty."""
+    from litellm.proxy._types import LitellmUserRoles
+
+    monkeypatch.setattr(proxy_server, "llm_model_list", [])
+    monkeypatch.setattr(proxy_server, "prisma_client", mock_prisma)
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    monkeypatch.setattr(proxy_server, "proxy_logging_obj", MagicMock())
+    monkeypatch.setattr(proxy_server, "user_api_key_cache", MagicMock())
+    mock_prisma.db.litellm_usertable.find_unique.return_value = None
+
+    # The Team-aware display path resolves this model through the router.
+    byok_team_router.get_model_names.return_value = [_BYOK_PUBLIC_NAME]
+    byok_team_router.get_model_list.return_value = [
+        {
+            "model_name": _BYOK_INTERNAL_NAME,
+            "model_info": {
+                "id": "byok-deployment-id",
+                "team_id": _BYOK_TEAM_ID,
+                "team_public_model_name": _BYOK_PUBLIC_NAME,
+            },
+        }
+    ]
+    byok_team_router.get_model_group_info.return_value = MagicMock(
+        model_dump=lambda: {
+            "model_group": _BYOK_INTERNAL_NAME,
+            "providers": ["openai"],
+        }
+    )
+
+    with auth_as(
+        role=LitellmUserRoles.INTERNAL_USER,
+        user_id=None,
+        team_id=_BYOK_TEAM_ID,
+        team_models=[_BYOK_PUBLIC_NAME],
+    ):
+        response = client.get("/model_group/info")
+
+    assert response.status_code == 200
+    groups = response.json()["data"]
+    assert [group["model_group"] for group in groups] == [_BYOK_PUBLIC_NAME]
+    assert groups[0]["providers"] == ["openai"]
+    assert byok_team_router.get_model_group_info.call_args_list[-1].kwargs == {
+        "model_group": _BYOK_INTERNAL_NAME
+    }
+
+
+def test_model_group_info_team_key_cannot_see_other_team_when_prisma_is_unavailable(
+    client, auth_as, byok_team_router, monkeypatch
+):
+    """Missing Prisma must fail closed for a non-admin Team key."""
+    from litellm.proxy._types import LitellmUserRoles
+
+    monkeypatch.setattr(proxy_server, "llm_model_list", [])
+    monkeypatch.setattr(proxy_server, "prisma_client", None)
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    monkeypatch.setattr(proxy_server, "proxy_logging_obj", MagicMock())
+    monkeypatch.setattr(proxy_server, "user_api_key_cache", MagicMock())
+    byok_team_router.get_model_names.return_value = [_BYOK_PUBLIC_NAME]
+    byok_team_router.get_model_list.return_value = [
+        {
+            "model_name": _BYOK_INTERNAL_NAME,
+            "model_info": {
+                "id": "byok-deployment-id",
+                "team_id": _BYOK_TEAM_ID,
+                "team_public_model_name": _BYOK_PUBLIC_NAME,
+            },
+        }
+    ]
+
+    with auth_as(
+        role=LitellmUserRoles.INTERNAL_USER,
+        user_id=None,
+        team_id="other-team",
+        team_models=[_BYOK_PUBLIC_NAME],
+    ):
+        response = client.get("/model_group/info")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    byok_team_router.get_model_group_info.assert_not_called()
+
+
+def test_model_group_info_public_name_filter_uses_authorized_internal_key(
+    client, auth_as, byok_team_router, mock_prisma, monkeypatch
+):
+    """A public-name query resolves only inside the caller's authorized set."""
+    from litellm.proxy._types import LitellmUserRoles
+
+    monkeypatch.setattr(proxy_server, "llm_model_list", [])
+    monkeypatch.setattr(proxy_server, "prisma_client", mock_prisma)
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    monkeypatch.setattr(proxy_server, "proxy_logging_obj", MagicMock())
+    monkeypatch.setattr(proxy_server, "user_api_key_cache", MagicMock())
+    mock_prisma.db.litellm_usertable.find_unique.return_value = None
+    byok_team_router.get_model_names.return_value = [_BYOK_PUBLIC_NAME]
+    byok_team_router.get_model_list.return_value = [
+        {
+            "model_name": _BYOK_INTERNAL_NAME,
+            "model_info": {
+                "id": "byok-deployment-id",
+                "team_id": _BYOK_TEAM_ID,
+                "team_public_model_name": _BYOK_PUBLIC_NAME,
+            },
+        }
+    ]
+    byok_team_router.get_model_group_info.return_value = None
+
+    with auth_as(
+        role=LitellmUserRoles.INTERNAL_USER,
+        user_id=None,
+        team_id=_BYOK_TEAM_ID,
+        team_models=[_BYOK_PUBLIC_NAME],
+    ):
+        response = client.get(
+            "/model_group/info", params={"model_group": _BYOK_PUBLIC_NAME}
+        )
+
+    assert response.status_code == 200
+    group = response.json()["data"][0]
+    assert group["model_group"] == _BYOK_PUBLIC_NAME
+    assert group["providers"] == []
+    assert byok_team_router.get_model_group_info.call_args_list[-1].kwargs == {
+        "model_group": _BYOK_INTERNAL_NAME
+    }

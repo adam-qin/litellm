@@ -163,3 +163,48 @@ class TestEmptyModelListHandling:
 
         assert response.status_code == 200
         assert response.json() == {"data": []}
+
+    def test_model_group_info_uses_router_models_when_global_list_empty(
+        self, client, monkeypatch
+    ):
+        """Router-backed DB models must not be hidden by an empty global list."""
+        internal_name = "model_name_team-abc_0123456789abcdef"
+        public_name = "my-byok-gpt-4"
+        deployment = {
+            "model_name": internal_name,
+            "model_info": {
+                "id": "deployment-id",
+                "team_id": "team-abc",
+                "team_public_model_name": public_name,
+            },
+        }
+        mock_router = MagicMock()
+        mock_router.model_list = [deployment]
+        mock_router.get_model_names.return_value = [internal_name]
+        mock_router.get_model_access_groups.return_value = {}
+        mock_router.get_model_list.return_value = [deployment]
+        mock_router.get_model_group_info.return_value = MagicMock(
+            model_dump=lambda: {
+                "model_group": internal_name,
+                "providers": ["openai"],
+            }
+        )
+
+        monkeypatch.setattr("litellm.proxy.proxy_server.llm_router", mock_router)
+        monkeypatch.setattr("litellm.proxy.proxy_server.llm_model_list", [])
+        monkeypatch.setattr("litellm.proxy.proxy_server.user_model", None)
+        monkeypatch.setattr("litellm.proxy.proxy_server.general_settings", {})
+        monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", None)
+
+        response = client.get(
+            "/model_group/info",
+            headers={"Authorization": "Bearer sk-test"},
+        )
+
+        assert response.status_code == 200
+        group = response.json()["data"][0]
+        assert group["model_group"] == public_name
+        assert group["providers"] == ["openai"]
+        assert mock_router.get_model_group_info.call_args_list[-1].kwargs == {
+            "model_group": internal_name
+        }
