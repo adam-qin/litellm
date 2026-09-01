@@ -42,6 +42,7 @@ from litellm.proxy.management_endpoints.common_utils import (
 )
 from litellm.proxy.management_endpoints.key_management_endpoints import (
     _check_permissions_caller_permission,
+    _is_vault_only_key_delivery,
     generate_key_helper_fn,
     prepare_metadata_fields,
 )
@@ -95,11 +96,20 @@ def _strip_password_from_response(response) -> None:
             response["data"].__dict__.pop("password", None)
 
 
-def _update_internal_new_user_params(data_json: dict, data: NewUserRequest) -> dict:
+def _update_internal_new_user_params(
+    data_json: dict,
+    data: NewUserRequest,
+    user_api_key_dict: Optional[UserAPIKeyAuth] = None,
+) -> dict:
     if "user_id" in data_json and data_json["user_id"] is None:
         data_json["user_id"] = str(uuid.uuid4())
 
     auto_create_key = data_json.pop("auto_create_key", True)
+    # Vault-only Proxy Admin callers must not mint a virtual key from /user/new.
+    # This path never writes the secret to Vault, so auto-create would leak
+    # plaintext in the HTTP response, audit log, and invitation email.
+    if user_api_key_dict is not None and _is_vault_only_key_delivery(user_api_key_dict):
+        auto_create_key = False
 
     if auto_create_key is False:
         data_json["table_name"] = "user"  # only create a user, don't create key if 'auto_create_key' set to False
@@ -465,7 +475,11 @@ async def new_user(
         )
 
         data_json = data.json()  # type: ignore
-        data_json = _update_internal_new_user_params(data_json, data)
+        data_json = _update_internal_new_user_params(
+            data_json,
+            data,
+            user_api_key_dict if isinstance(user_api_key_dict, UserAPIKeyAuth) else None,
+        )
         _hash_password_in_dict(data_json)
         teams = data.teams
         if teams is None:
@@ -511,7 +525,16 @@ async def new_user(
             if key in NewUserResponse.model_fields.keys() and key not in special_keys:
                 response_dict[key] = value
 
-        response_dict["key"] = response.get("token", "")
+        minted_token = response.get("token")
+        vault_only_caller = isinstance(user_api_key_dict, UserAPIKeyAuth) and _is_vault_only_key_delivery(
+            user_api_key_dict
+        )
+        if vault_only_caller or not minted_token:
+            # Never return a plaintext sk- key from /user/new under Vault-only
+            # delivery, and do not coerce a missing token into an empty string.
+            response_dict["key"] = None
+        else:
+            response_dict["key"] = minted_token
 
         new_user_response = NewUserResponse(**response_dict)
 

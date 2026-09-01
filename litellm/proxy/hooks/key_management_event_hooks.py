@@ -24,6 +24,25 @@ from litellm.proxy.utils import _hash_token_if_needed
 LITELLM_PREFIX_STORED_VIRTUAL_KEYS = "litellm/"
 
 
+def _sanitize_key_event_payload(
+    payload: Dict[str, Any], *, preserve_key_for_delivery: bool = False
+) -> Dict[str, Any]:
+    """Remove secret material from audit/event payloads.
+
+    Audit payloads must never contain the plaintext key. Delivery payloads may
+    retain the key for the legacy non-Vault email flow; Vault-only responses
+    already have ``key=None``. In both cases an accidental plaintext ``sk-``
+    token is removed while hashed token metadata is retained.
+    """
+    sanitized = dict(payload)
+    if not preserve_key_for_delivery:
+        sanitized.pop("key", None)
+    token = sanitized.get("token")
+    if isinstance(token, str) and token.startswith("sk-"):
+        sanitized.pop("token", None)
+    return sanitized
+
+
 class KeyManagementEventHooks:
     @staticmethod
     async def async_key_generated_hook(
@@ -51,13 +70,21 @@ class KeyManagementEventHooks:
         # only contain the Vault path and token metadata.
         if data.send_invite_email is True:
             try:
-                await KeyManagementEventHooks._send_key_created_email(response.model_dump(exclude_none=True))
+                await KeyManagementEventHooks._send_key_created_email(
+                    _sanitize_key_event_payload(
+                        response.model_dump(exclude_none=True),
+                        preserve_key_for_delivery=True,
+                    )
+                )
             except Exception as e:
                 verbose_proxy_logger.warning(f"Failed to send key created email: {e}")
 
         # Enterprise Feature - Audit Logging. Enable with litellm.store_audit_logs = True
         if litellm.store_audit_logs is True:
-            _updated_values = response.model_dump_json(exclude_none=True)
+            _updated_values = json.dumps(
+                _sanitize_key_event_payload(response.model_dump(exclude_none=True)),
+                default=str,
+            )
             asyncio.create_task(
                 create_audit_log_for_update(
                     request_data=LiteLLM_AuditLogs(
@@ -180,7 +207,10 @@ class KeyManagementEventHooks:
         # Send key rotated email if configured - non-blocking, independent operation
         try:
             await KeyManagementEventHooks._send_key_rotated_email(
-                response=response.model_dump(exclude_none=True),
+                response=_sanitize_key_event_payload(
+                    response.model_dump(exclude_none=True),
+                    preserve_key_for_delivery=True,
+                ),
                 existing_key_alias=existing_key_row.key_alias,
             )
         except Exception as e:
@@ -202,7 +232,10 @@ class KeyManagementEventHooks:
                         table_name=LitellmTableNames.KEY_TABLE_NAME,
                         object_id=existing_key_row.token,
                         action="rotated",
-                        updated_values=response.model_dump_json(exclude_none=True),
+                        updated_values=json.dumps(
+                            _sanitize_key_event_payload(response.model_dump(exclude_none=True)),
+                            default=str,
+                        ),
                         before_value=existing_key_row.model_dump_json(exclude_none=True),
                     )
                 )
@@ -522,11 +555,11 @@ class KeyManagementEventHooks:
             )
             if len(initialized_email_loggers) > 0:
                 event = SendKeyCreatedEmailEvent(
-                    virtual_key=response.get("key", ""),
+                    virtual_key=response.get("key") or "",
                     event="key_created",
                     event_group=Litellm_EntityType.KEY,
                     event_message="API Key Created",
-                    token=response.get("token", ""),
+                    token=response.get("token") or "",
                     spend=response.get("spend", 0.0),
                     max_budget=response.get("max_budget", 0.0),
                     user_id=response.get("user_id", None),
@@ -552,7 +585,7 @@ class KeyManagementEventHooks:
                 event="key_created",
                 event_group=Litellm_EntityType.KEY,
                 event_message="API Key Created",
-                token=response.get("token", ""),
+                token=response.get("token") or "",
                 spend=response.get("spend", 0.0),
                 max_budget=response.get("max_budget", 0.0),
                 user_id=response.get("user_id", None),
@@ -597,11 +630,11 @@ class KeyManagementEventHooks:
             return
 
         event = SendKeyRotatedEmailEvent(
-            virtual_key=response.get("key", ""),
+            virtual_key=response.get("key") or "",
             event="key_rotated",
             event_group=Litellm_EntityType.KEY,
             event_message="API Key Rotated",
-            token=response.get("token", ""),
+            token=response.get("token") or "",
             spend=response.get("spend", 0.0),
             max_budget=response.get("max_budget", 0.0),
             user_id=response.get("user_id", None),

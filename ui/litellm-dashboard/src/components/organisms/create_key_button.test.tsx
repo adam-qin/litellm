@@ -2,6 +2,7 @@ import { act, fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor } from "../../../tests/test-utils";
 import { Team } from "../key_team_helpers/key_list";
+import NotificationsManager from "../molecules/notifications_manager";
 import { userFilterUICall } from "../networking";
 import CreateKey from "./create_key_button";
 
@@ -775,6 +776,43 @@ describe("CreateKey", () => {
         expect(screen.getByText("production")).toBeInTheDocument();
         expect(screen.getByText("staging")).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("vault-only key delivery", () => {
+    it("does not show the plaintext Save your Key page when key_delivery is vault", async () => {
+      mockKeyCreateCall.mockResolvedValue({
+        key: null,
+        key_delivery: "vault",
+        vault_secret_name: "litellm/app-prod",
+        soft_budget: null,
+      });
+
+      renderWithProviders(<CreateKey {...defaultProps} />);
+
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: /create new key/i }));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /create key/i })).toBeInTheDocument();
+      });
+
+      act(() => {
+        formMock.setFieldValue("key_alias", "app-prod");
+        fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+      });
+
+      await waitFor(() => {
+        expect(mockKeyCreateCall).toHaveBeenCalled();
+      });
+
+      expect(screen.queryByText("Save your Key")).not.toBeInTheDocument();
+      expect(screen.queryByText("test-api-key")).not.toBeInTheDocument();
+      expect(NotificationsManager.success).toHaveBeenCalledWith(
+        "Virtual Key created and stored in Vault: litellm/app-prod",
+      );
+      expect(defaultProps.addKey).toHaveBeenCalled();
     });
   });
 });

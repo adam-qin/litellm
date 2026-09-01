@@ -27,6 +27,18 @@ from litellm.proxy.management_helpers.audit_logs import create_audit_log_for_upd
 from litellm.repositories.user_repository import UserRepository
 
 
+def _safe_invitation_token(token: Optional[str]) -> Optional[str]:
+    """Return a hashed token for invitation emails, never a plaintext sk- key.
+
+    WebhookEvent.token is documented as the hashed verification token. When
+    /user/new does not mint a key, or when a Vault-only caller would otherwise
+    leak a plaintext value, omit the field instead of sending `sk-...`.
+    """
+    if not token or token.startswith("sk-"):
+        return None
+    return token
+
+
 class UserManagementEventHooks:
     @staticmethod
     async def async_user_created_hook(
@@ -91,7 +103,7 @@ class UserManagementEventHooks:
             event="internal_user_created",
             event_group=Litellm_EntityType.USER,
             event_message="Welcome to LiteLLM Proxy",
-            token=response.token,
+            token=_safe_invitation_token(response.token),
             spend=response.spend or 0.0,
             max_budget=response.max_budget,
             user_id=response.user_id,

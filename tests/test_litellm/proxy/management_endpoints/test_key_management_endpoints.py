@@ -28,6 +28,7 @@ from litellm.proxy._types import (
     LitellmUserRoles,
     Member,
     ProxyException,
+    RegenerateKeyRequest,
     ResetSpendRequest,
     UpdateKeyRequest,
 )
@@ -36,6 +37,7 @@ from litellm.proxy.management_endpoints.key_management_endpoints import (
     _check_org_key_limits,
     _check_team_key_limits,
     _common_key_generation_helper,
+    _is_vault_only_key_delivery,
     _enforce_upperbound_key_params,
     _get_and_validate_existing_key,
     _list_key_helper,
@@ -52,6 +54,7 @@ from litellm.proxy.management_endpoints.key_management_endpoints import (
     delete_verification_tokens,
     generate_key_fn,
     generate_key_helper_fn,
+    get_new_token,
     key_aliases,
     key_generation_check,
     list_keys,
@@ -15067,3 +15070,309 @@ async def test_rotate_master_key_rotates_sso_identity_assertions(
         prisma_client=mock_prisma_client,
         new_master_key="sk-new-master-key",
     )
+
+
+PLAINTEXT_GENERATED_KEY = "sk-plaintext-generated-key"
+HASHED_TOKEN_ID = "hashed-token-id-abc123"
+VAULT_SECRET_NAME = "litellm/app-prod"
+
+
+def _vault_only_admin(user_id="admin-user"):
+    return UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN,
+        api_key="sk-admin",
+        user_id=user_id,
+    )
+
+
+def _enable_vault_only(client_ready=True):
+    from litellm.secret_managers.hashicorp_secret_manager import HashicorpSecretManager
+    from litellm.types.secret_managers.main import (
+        KeyManagementSettings,
+        KeyManagementSystem,
+    )
+
+    original = {
+        "kms": litellm._key_management_system,
+        "settings": litellm._key_management_settings,
+        "client": litellm.secret_manager_client,
+    }
+
+    class DummyVaultClient:
+        pass
+
+    HashicorpSecretManager.register(DummyVaultClient)
+    litellm._key_management_system = KeyManagementSystem.HASHICORP_VAULT
+    litellm._key_management_settings = KeyManagementSettings(store_virtual_keys=True)
+    if client_ready:
+        litellm.secret_manager_client = DummyVaultClient()
+    else:
+        litellm.secret_manager_client = None
+    return original
+
+
+def _restore_vault_only(original):
+    litellm._key_management_system = original["kms"]
+    litellm._key_management_settings = original["settings"]
+    litellm.secret_manager_client = original["client"]
+
+
+def _vault_only_helper_response(user_id="admin-user", team_id=None, key_alias="app-prod"):
+    return {
+        "token": PLAINTEXT_GENERATED_KEY,
+        "token_id": HASHED_TOKEN_ID,
+        "expires": None,
+        "user_id": user_id,
+        "team_id": team_id,
+        "key_alias": key_alias,
+        "blocked": True,
+    }
+
+
+def test_is_vault_only_key_delivery_requires_ready_hashicorp_client():
+    """Config alone is not enough: the current Pod must have a Vault client."""
+    admin = _vault_only_admin()
+    original = _enable_vault_only(client_ready=False)
+    try:
+        assert _is_vault_only_key_delivery(admin) is False
+    finally:
+        _restore_vault_only(original)
+
+    original = _enable_vault_only(client_ready=True)
+    try:
+        assert _is_vault_only_key_delivery(admin) is True
+        non_admin = UserAPIKeyAuth(
+            user_role=LitellmUserRoles.INTERNAL_USER,
+            api_key="sk-alice",
+            user_id="alice",
+        )
+        assert _is_vault_only_key_delivery(non_admin) is False
+    finally:
+        _restore_vault_only(original)
+
+
+@pytest.mark.asyncio
+async def test_get_new_token_rejects_custom_key_when_vault_only():
+    with pytest.raises(HTTPException) as exc:
+        await get_new_token(
+            data=RegenerateKeyRequest(new_key="sk-custom-rotated-key"),
+            vault_only_delivery=True,
+        )
+    assert int(getattr(exc.value, "status_code", 0)) == 403
+    assert "Vault-only delivery" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_vault_only_generate_redacts_plaintext_for_admin_self():
+    """Proxy Admin creating a key for themselves returns key=None after Vault write."""
+    original = _enable_vault_only(client_ready=True)
+    mock_repo = MagicMock()
+    mock_repo.table.find_first = AsyncMock(return_value=None)
+    mock_repo.set_blocked_state = AsyncMock()
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._is_vault_only_key_delivery",
+                return_value=True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.generate_key_helper_fn",
+                new_callable=AsyncMock,
+                return_value=_vault_only_helper_response(user_id="admin-user"),
+            ) as mock_generate_key,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.VerificationTokenRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks._store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+                return_value=VAULT_SECRET_NAME,
+            ) as mock_store,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks.async_key_generated_hook",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = await _common_key_generation_helper(
+                data=GenerateKeyRequest(key_alias="app-prod"),
+                user_api_key_dict=_vault_only_admin(),
+                litellm_changed_by=None,
+                team_table=None,
+            )
+    finally:
+        _restore_vault_only(original)
+
+    assert response.key is None
+    assert response.key_delivery == "vault"
+    assert response.vault_secret_name == VAULT_SECRET_NAME
+    assert response.token == HASHED_TOKEN_ID
+    assert PLAINTEXT_GENERATED_KEY not in (response.key or "")
+    assert mock_generate_key.await_args.kwargs.get("blocked") is True
+    mock_store.assert_awaited_once()
+    assert mock_store.await_args.kwargs["secret_name"] == "app-prod"
+    assert mock_store.await_args.kwargs["secret_token"] == PLAINTEXT_GENERATED_KEY
+    mock_repo.set_blocked_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_vault_only_generate_redacts_plaintext_for_other_user():
+    """Vault-only is based on the caller role, not the target user_id."""
+    original = _enable_vault_only(client_ready=True)
+    mock_repo = MagicMock()
+    mock_repo.table.find_first = AsyncMock(return_value=None)
+    mock_repo.set_blocked_state = AsyncMock()
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._is_vault_only_key_delivery",
+                return_value=True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.generate_key_helper_fn",
+                new_callable=AsyncMock,
+                return_value=_vault_only_helper_response(user_id="alice"),
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.VerificationTokenRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks._store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+                return_value=VAULT_SECRET_NAME,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks.async_key_generated_hook",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = await _common_key_generation_helper(
+                data=GenerateKeyRequest(key_alias="app-prod", user_id="alice"),
+                user_api_key_dict=_vault_only_admin(),
+                litellm_changed_by=None,
+                team_table=None,
+            )
+    finally:
+        _restore_vault_only(original)
+
+    assert response.key is None
+    assert response.key_delivery == "vault"
+    assert response.user_id == "alice"
+
+
+@pytest.mark.asyncio
+async def test_vault_only_generate_rejects_custom_key():
+    original = _enable_vault_only(client_ready=True)
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._is_vault_only_key_delivery",
+                return_value=True,
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await _common_key_generation_helper(
+                    data=GenerateKeyRequest(key="sk-custom-key-xyz1"),
+                    user_api_key_dict=_vault_only_admin(),
+                    litellm_changed_by=None,
+                    team_table=None,
+                )
+    finally:
+        _restore_vault_only(original)
+
+    assert int(getattr(exc.value, "status_code", 0)) == 403
+    assert "custom key values are disabled" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_vault_only_generate_returns_503_when_vault_write_fails():
+    """Vault failure is fail-closed: 503, key stays blocked, blocked state is not restored."""
+    original = _enable_vault_only(client_ready=True)
+    mock_repo = MagicMock()
+    mock_repo.table.find_first = AsyncMock(return_value=None)
+    mock_repo.set_blocked_state = AsyncMock()
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._is_vault_only_key_delivery",
+                return_value=True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.generate_key_helper_fn",
+                new_callable=AsyncMock,
+                return_value=_vault_only_helper_response(),
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.VerificationTokenRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks._store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("vault unavailable"),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await _common_key_generation_helper(
+                    data=GenerateKeyRequest(key_alias="app-prod"),
+                    user_api_key_dict=_vault_only_admin(),
+                    litellm_changed_by=None,
+                    team_table=None,
+                )
+    finally:
+        _restore_vault_only(original)
+
+    assert int(getattr(exc.value, "status_code", 0)) == 503
+    assert "Vault storage failed" in str(exc.value.detail)
+    mock_repo.set_blocked_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vault_only_does_not_activate_when_client_missing():
+    """Unset Vault client must not pretend the key was stored in Vault."""
+    original = _enable_vault_only(client_ready=False)
+    mock_repo = MagicMock()
+    mock_repo.table.find_first = AsyncMock(return_value=None)
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.generate_key_helper_fn",
+                new_callable=AsyncMock,
+                return_value=_vault_only_helper_response(),
+            ) as mock_generate_key,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.VerificationTokenRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks.async_key_generated_hook",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = await _common_key_generation_helper(
+                data=GenerateKeyRequest(key_alias="app-prod"),
+                user_api_key_dict=_vault_only_admin(),
+                litellm_changed_by=None,
+                team_table=None,
+            )
+    finally:
+        _restore_vault_only(original)
+
+    assert response.key_delivery != "vault"
+    assert mock_generate_key.await_args.kwargs.get("blocked") is not True

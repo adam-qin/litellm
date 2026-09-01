@@ -3667,3 +3667,131 @@ async def test_add_user_to_team_keeps_already_a_member_quiet(mocker, caplog):
         )
 
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+def test_update_internal_new_user_params_vault_only_forces_no_auto_key():
+    """Vault-only Proxy Admin callers must not mint a key from /user/new."""
+    from unittest.mock import patch
+
+    from litellm.proxy.management_endpoints.internal_user_endpoints import (
+        _update_internal_new_user_params,
+    )
+
+    data = NewUserRequest(
+        user_email="alice@example.com",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        auto_create_key=True,
+    )
+    data_json = data.model_dump(exclude_unset=True)
+    caller = UserAPIKeyAuth(
+        user_id="admin", user_role=LitellmUserRoles.PROXY_ADMIN
+    )
+
+    with patch(
+        "litellm.proxy.management_endpoints.internal_user_endpoints._is_vault_only_key_delivery",
+        return_value=True,
+    ):
+        result = _update_internal_new_user_params(
+            data_json=data_json, data=data, user_api_key_dict=caller
+        )
+
+    assert result.get("table_name") == "user"
+    assert "auto_create_key" not in result
+
+
+def test_update_internal_new_user_params_two_arg_call_still_creates_key():
+    """Existing two-argument callers keep the auto-create-key default."""
+    from litellm.proxy.management_endpoints.internal_user_endpoints import (
+        _update_internal_new_user_params,
+    )
+
+    data = NewUserRequest(
+        user_email="alice@example.com",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        auto_create_key=True,
+    )
+    data_json = data.model_dump(exclude_unset=True)
+    result = _update_internal_new_user_params(data_json=data_json, data=data)
+    assert result.get("table_name") != "user"
+
+
+@pytest.mark.asyncio
+async def test_new_user_vault_only_does_not_auto_mint_or_return_plaintext():
+    """Proxy Admin + Vault-only /user/new must only create the user row."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from litellm.proxy.management_endpoints.internal_user_endpoints import new_user
+
+    mock_prisma_client = MagicMock()
+    mock_license_check = MagicMock()
+    mock_license_check.is_over_limit.return_value = False
+
+    async def mock_check(*_args, **_kwargs):
+        return None
+
+    helper_kwargs = {}
+
+    async def stub_helper(**kwargs):
+        helper_kwargs.update(kwargs)
+        return {
+            "user_id": "alice",
+            "user_email": "alice@example.com",
+            "token": "sk-should-not-leak",
+            "expires": None,
+        }
+
+    with (
+        patch("litellm.proxy.proxy_server.prisma_client", mock_prisma_client),
+        patch("litellm.proxy.proxy_server._license_check", mock_license_check),
+        patch(
+            "litellm.proxy.management_endpoints.internal_user_endpoints._check_duplicate_user_email",
+            mock_check,
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.internal_user_endpoints._check_duplicate_user_id",
+            mock_check,
+        ),
+        patch(
+            "litellm.repositories.user_repository.UserRepository.count_billable_users",
+            AsyncMock(return_value=5),
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.internal_user_endpoints._is_vault_only_key_delivery",
+            return_value=True,
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.internal_user_endpoints.UserManagementEventHooks.async_user_created_hook",
+            AsyncMock(),
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.internal_user_endpoints.generate_key_helper_fn",
+            stub_helper,
+        ),
+    ):
+        result = await new_user(
+            data=NewUserRequest(
+                user_email="alice@example.com",
+                user_role=LitellmUserRoles.INTERNAL_USER,
+                auto_create_key=True,
+            ),
+            user_api_key_dict=UserAPIKeyAuth(
+                user_id="admin", user_role=LitellmUserRoles.PROXY_ADMIN
+            ),
+        )
+
+    assert helper_kwargs.get("table_name") == "user"
+    assert result.key is None
+    assert result.token != "sk-should-not-leak"
+    dumped = result.model_dump()
+    assert dumped.get("key") is None
+    assert "sk-should-not-leak" not in str(dumped)
+
+
+def test_safe_invitation_token_drops_plaintext_sk_values():
+    from litellm.proxy.hooks.user_management_event_hooks import _safe_invitation_token
+
+    assert _safe_invitation_token(None) is None
+    assert _safe_invitation_token("") is None
+    assert _safe_invitation_token("sk-plaintext-user-key") is None
+    hashed = "a" * 64
+    assert _safe_invitation_token(hashed) == hashed

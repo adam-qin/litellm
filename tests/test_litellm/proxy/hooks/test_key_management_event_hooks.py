@@ -601,3 +601,163 @@ class TestKeyUpdatedAuditLogObjectId:
         audit_row = await self._run_updated_hook_and_capture_audit_log(request_key=hashed_key)
 
         assert audit_row.object_id == hashed_key
+
+
+class TestVaultOnlyKeyEventSanitization:
+    def test_sanitize_drops_plaintext_key_and_sk_token(self):
+        from litellm.proxy.hooks.key_management_event_hooks import (
+            _sanitize_key_event_payload,
+        )
+
+        sanitized = _sanitize_key_event_payload(
+            {
+                "key": "sk-plaintext-generated-key",
+                "token": "sk-plaintext-generated-key",
+                "token_id": "hashed-token-id-abc123",
+                "key_delivery": "vault",
+                "vault_secret_name": "litellm/app-prod",
+                "user_id": "admin-user",
+            }
+        )
+        assert "key" not in sanitized
+        assert "token" not in sanitized
+        assert sanitized["token_id"] == "hashed-token-id-abc123"
+        assert sanitized["vault_secret_name"] == "litellm/app-prod"
+
+    def test_sanitize_keeps_hashed_token(self):
+        from litellm.proxy.hooks.key_management_event_hooks import (
+            _sanitize_key_event_payload,
+        )
+
+        hashed = "a" * 64
+        sanitized = _sanitize_key_event_payload(
+            {"token": hashed, "token_id": hashed, "user_id": "alice"}
+        )
+        assert sanitized["token"] == hashed
+        assert sanitized["token_id"] == hashed
+
+    def test_delivery_payload_preserves_legacy_non_vault_key(self):
+        from litellm.proxy.hooks.key_management_event_hooks import (
+            _sanitize_key_event_payload,
+        )
+
+        sanitized = _sanitize_key_event_payload(
+            {
+                "key": "sk-one-time-delivery-key",
+                "token": "hashed-token-id-abc123",
+            },
+            preserve_key_for_delivery=True,
+        )
+        assert sanitized["key"] == "sk-one-time-delivery-key"
+        assert sanitized["token"] == "hashed-token-id-abc123"
+
+    @pytest.mark.asyncio
+    async def test_generated_hook_skips_second_vault_write_when_key_is_none(self):
+        from litellm.proxy._types import GenerateKeyRequest, GenerateKeyResponse, UserAPIKeyAuth
+        from litellm.proxy.hooks.key_management_event_hooks import KeyManagementEventHooks
+
+        # Set key=None after construction: the validator copies token -> key.
+        response = GenerateKeyResponse(
+            key_delivery="vault",
+            vault_secret_name="litellm/app-prod",
+            token_id="hashed-token-id-abc123",
+            token="hashed-token-id-abc123",
+        )
+        response.key = None
+        captured_email = {}
+
+        async def capture_email(payload):
+            captured_email["payload"] = payload
+
+        with (
+            patch.object(
+                KeyManagementEventHooks,
+                "_send_key_created_email",
+                side_effect=capture_email,
+            ),
+            patch.object(
+                KeyManagementEventHooks,
+                "_store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+            ) as mock_store,
+            patch.object(
+                KeyManagementEventHooks,
+                "_is_email_sending_enabled",
+                return_value=True,
+            ),
+            patch("litellm.store_audit_logs", False),
+        ):
+            await KeyManagementEventHooks.async_key_generated_hook(
+                data=GenerateKeyRequest(key_alias="app-prod", send_invite_email=True),
+                response=response,
+                user_api_key_dict=UserAPIKeyAuth(
+                    api_key="sk-admin", user_id="admin-user"
+                ),
+            )
+
+        mock_store.assert_not_called()
+        payload = captured_email["payload"]
+        assert payload.get("key") in (None, "")
+        assert "sk-" not in str(payload.get("key") or "")
+        assert "sk-" not in str(payload.get("token") or "")
+        assert payload.get("vault_secret_name") == "litellm/app-prod"
+
+    @pytest.mark.asyncio
+    async def test_generated_hook_audit_payload_omits_plaintext(self):
+        import asyncio
+
+        from litellm.proxy._types import (
+            GenerateKeyRequest,
+            GenerateKeyResponse,
+            UserAPIKeyAuth,
+        )
+        from litellm.proxy.hooks.key_management_event_hooks import (
+            KeyManagementEventHooks,
+        )
+
+        captured = []
+
+        async def capture_audit_log(request_data):
+            captured.append(request_data)
+
+        response = GenerateKeyResponse(
+            key="sk-should-not-reach-audit",
+            token="sk-should-not-reach-audit",
+            token_id="hashed-token-id-abc123",
+            key_delivery="response",
+            user_id="admin-user",
+        )
+
+        with (
+            patch("litellm.store_audit_logs", True),
+            patch(
+                "litellm.proxy.management_helpers.audit_logs.create_audit_log_for_update",
+                new=capture_audit_log,
+            ),
+            patch.object(
+                KeyManagementEventHooks,
+                "_store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                KeyManagementEventHooks,
+                "_is_email_sending_enabled",
+                return_value=False,
+            ),
+        ):
+            await KeyManagementEventHooks.async_key_generated_hook(
+                data=GenerateKeyRequest(key_alias="app-prod"),
+                response=response,
+                user_api_key_dict=UserAPIKeyAuth(
+                    api_key="sk-admin", user_id="admin-user"
+                ),
+            )
+            for _ in range(100):
+                if captured:
+                    break
+                await asyncio.sleep(0.01)
+
+        assert len(captured) == 1
+        updated_values = str(captured[0].updated_values)
+        assert "sk-should-not-reach-audit" not in updated_values
+        assert "hashed-token-id-abc123" in updated_values
