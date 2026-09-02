@@ -13,7 +13,11 @@ from litellm.proxy._types import KeyManagementSystem, LitellmUserRoles, UserAPIK
 from litellm.proxy.management_endpoints.config_override_endpoints import (
     HASHICORP_ENV_VAR_MAPPING,
     _build_field_schema,
+    _is_premium_gate_error,
     _set_env_vars,
+)
+from litellm.secret_managers.hashicorp_secret_manager import (
+    SecretManagerPremiumGateError,
 )
 from litellm.proxy.proxy_server import app
 from litellm.types.proxy.management_endpoints.config_overrides import (
@@ -502,4 +506,146 @@ class TestHashicorpVaultAuditLog:
 
             assert audit_calls == []
         finally:
+            _cleanup()
+
+
+# ── Enterprise license gate on the Vault secret manager ─────────────────────
+
+
+_PREMIUM_ERROR = (
+    "Hashicorp secret manager is only available for premium users. "
+    "You must be a LiteLLM Enterprise user to use this feature."
+)
+
+
+def _secret_manager_premium_error():
+    from litellm.secret_managers.hashicorp_secret_manager import (
+        SecretManagerPremiumGateError,
+    )
+
+    return SecretManagerPremiumGateError(_PREMIUM_ERROR)
+
+
+class TestVaultPremiumGate:
+    """XHub self-hosted deployments do not always carry a LiteLLM Enterprise
+    license. The premium gate stays on by default; operators opt in explicitly
+    with `XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS=true`.
+
+    Without that, `POST /config_overrides/hashicorp_vault` fails during
+    `initialize_secret_manager()` and no Vault config is ever persisted.
+    """
+
+    @staticmethod
+    def _init_manager():
+        from litellm.secret_managers.hashicorp_secret_manager import (
+            HashicorpSecretManager,
+        )
+
+        return HashicorpSecretManager()
+
+    def test_manager_blocked_without_license_by_default(self, monkeypatch):
+        monkeypatch.delenv("XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS", raising=False)
+        monkeypatch.setenv("HCP_VAULT_ADDR", "https://vault.example.com")
+        monkeypatch.setenv("HCP_VAULT_TOKEN", "vault-token")
+        monkeypatch.setattr(ps, "premium_user", False)
+
+        with pytest.raises(SecretManagerPremiumGateError):
+            self._init_manager()
+        assert _is_premium_gate_error(ValueError(_PREMIUM_ERROR))
+
+    def test_manager_allowed_with_xhub_opt_in(self, monkeypatch):
+        monkeypatch.setenv("XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS", "true")
+        monkeypatch.setenv("HCP_VAULT_ADDR", "https://vault.example.com")
+        monkeypatch.setenv("HCP_VAULT_TOKEN", "vault-token")
+        monkeypatch.setattr(ps, "premium_user", False)
+        old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+
+        try:
+            manager = self._init_manager()
+            assert litellm.secret_manager_client is manager
+            assert litellm._key_management_system == KeyManagementSystem.HASHICORP_VAULT
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_system = old_kms
+
+    def test_manager_allowed_for_premium_user(self, monkeypatch):
+        monkeypatch.delenv("XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS", raising=False)
+        monkeypatch.setenv("HCP_VAULT_ADDR", "https://vault.example.com")
+        monkeypatch.setenv("HCP_VAULT_TOKEN", "vault-token")
+        monkeypatch.setattr(ps, "premium_user", True)
+        old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+
+        try:
+            self._init_manager()
+            assert litellm._key_management_system == KeyManagementSystem.HASHICORP_VAULT
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_system = old_kms
+
+    @pytest.mark.asyncio
+    async def test_save_returns_actionable_403_on_license_gate(
+        self, client, monkeypatch
+    ):
+        """A missing license must surface as 403 with remediation steps, not a
+        500 echoing upstream's enterprise marketing copy."""
+        mock_prisma, mock_db = _make_mock_db()
+        mock_cfg = _make_mock_proxy_config()
+        mock_cfg.initialize_secret_manager = MagicMock(
+            side_effect=_secret_manager_premium_error()
+        )
+        monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+        monkeypatch.setattr(ps, "proxy_config", mock_cfg)
+        old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+        old_settings = litellm._key_management_settings
+        _set_admin()
+
+        try:
+            r = client.post(
+                VAULT_URL,
+                json={
+                    "vault_addr": "https://vault.example.com",
+                    "vault_token": "tok",
+                },
+            )
+            assert r.status_code == 403
+            detail = r.json()["detail"]
+            assert "XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS" in detail
+            assert "LITELLM_LICENSE" in detail
+            # Failure must stay atomic: nothing persisted.
+            mock_db.upsert.assert_not_awaited()
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_system = old_kms
+            litellm._key_management_settings = old_settings
+            _cleanup()
+
+    @pytest.mark.asyncio
+    async def test_non_license_init_failure_still_returns_500(
+        self, client, monkeypatch
+    ):
+        mock_prisma, mock_db = _make_mock_db()
+        mock_cfg = _make_mock_proxy_config()
+        mock_cfg.initialize_secret_manager = MagicMock(
+            side_effect=ValueError("connection refused")
+        )
+        monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+        monkeypatch.setattr(ps, "proxy_config", mock_cfg)
+        old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+        old_settings = litellm._key_management_settings
+        _set_admin()
+
+        try:
+            r = client.post(
+                VAULT_URL,
+                json={
+                    "vault_addr": "https://vault.example.com",
+                    "vault_token": "tok",
+                },
+            )
+            assert r.status_code == 500
+            assert "connection refused" in r.json()["detail"]
+        finally:
+            litellm.secret_manager_client = old_client
+            litellm._key_management_system = old_kms
+            litellm._key_management_settings = old_settings
             _cleanup()

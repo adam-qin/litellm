@@ -6390,6 +6390,7 @@ class ProxyConfig:
             _apply_hashicorp_key_management_settings,
             _clear_hashicorp_vault_state,
             _get_current_env_values,
+            _is_premium_gate_error,
             _parse_config_value,
             _set_env_vars,
         )
@@ -6440,6 +6441,12 @@ class ProxyConfig:
             self._last_hashicorp_vault_config = config_data.copy()
             verbose_proxy_logger.debug("Hashicorp Vault config override loaded from DB")
         except Exception as e:
+            if _is_premium_gate_error(e):
+                verbose_proxy_logger.warning(
+                    "Hashicorp Vault config found in DB but this pod is not licensed for the "
+                    "Vault secret manager. Set LITELLM_LICENSE, or set "
+                    "XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS=true on XHub self-hosted deployments."
+                )
             verbose_proxy_logger.exception(
                 "Error loading Hashicorp Vault config override from DB: %s",
                 str(e),

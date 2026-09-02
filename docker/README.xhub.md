@@ -80,6 +80,33 @@ curl -I http://127.0.0.1:4000/ui/
 docker compose -f docker-compose.xhub.yml down
 ```
 
+### 启用 HashiCorp Vault（无 Enterprise License 时）
+
+LiteLLM 上游把 Vault secret manager 作为 Enterprise 付费特性：没有有效
+`LITELLM_LICENSE` 时，管理后台保存 Vault 配置会报
+`Hashicorp secret manager is only available for premium users`。
+
+XHub 自托管可以在确认自身有权使用该特性后，显式开启开关：
+
+```dotenv
+XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS=true
+```
+
+开关默认关闭（即保持 LiteLLM 上游行为）。开启后：
+
+- 启动时 `general_settings.key_management_system: hashicorp_vault` 可以正常初始化；
+- `POST /config_overrides/hashicorp_vault` 可以正常保存并跨 Pod 同步；
+- 每次绕过都会打印一条 WARNING 日志，便于审计。
+
+如果已购买 Enterprise 授权，直接设置 `LITELLM_LICENSE` 即可，不需要该开关。
+
+改动后重启服务：
+
+```bash
+docker compose -f docker-compose.xhub.yml up -d
+docker compose -f docker-compose.xhub.yml logs -f litellm | grep -i vault
+```
+
 如果需要删除 PostgreSQL 数据卷，必须明确确认后执行：
 
 ```bash

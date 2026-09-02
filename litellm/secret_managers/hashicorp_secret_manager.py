@@ -16,6 +16,33 @@ from litellm.proxy._types import KeyManagementSystem
 
 from .base_secret_manager import BaseSecretManager, raise_if_unsafe_secret_name
 
+# XHub self-hosted deployments ship the HashiCorp Vault integration without a
+# LiteLLM Enterprise license. The upstream premium gate is preserved by default
+# (see `HashicorpSecretManager.__init__`): operators must explicitly opt in with
+# this env var, and every bypass is logged as a warning.
+XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR = "XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS"
+_TRUTHY_ENV_VALUES = ("true", "1", "yes", "on")
+
+
+class SecretManagerPremiumGateError(ValueError):
+    """Raised when a secret manager is gated behind a LiteLLM Enterprise license.
+
+    Callers (config endpoints, pod reload loops) branch on this type to surface
+    actionable remediation instead of a generic 500.
+    """
+
+
+def _xhub_community_secret_manager_enabled() -> bool:
+    """Return True when this XHub deployment opted out of the Vault premium gate.
+
+    Default is False: without a valid `LITELLM_LICENSE`, Vault initialization
+    keeps failing exactly like upstream LiteLLM.
+    """
+    return (
+        os.getenv(XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR, "false").strip().lower()
+        in _TRUTHY_ENV_VALUES
+    )
+
 
 class HashicorpSecretManager(BaseSecretManager):
     def __init__(self):
@@ -45,8 +72,14 @@ class HashicorpSecretManager(BaseSecretManager):
         self._verify_required_credentials_exist()
 
         if premium_user is not True:
-            raise ValueError(
-                f"Hashicorp secret manager is only available for premium users. {CommonProxyErrors.not_premium_user.value}"
+            if not _xhub_community_secret_manager_enabled():
+                raise SecretManagerPremiumGateError(
+                    f"Hashicorp secret manager is only available for premium users. {CommonProxyErrors.not_premium_user.value}"
+                )
+            verbose_logger.warning(
+                "Hashicorp secret manager enabled for a non-premium XHub deployment via %s=true. "
+                "Ensure this deployment is entitled to use the feature.",
+                XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR,
             )
 
         litellm.secret_manager_client = self

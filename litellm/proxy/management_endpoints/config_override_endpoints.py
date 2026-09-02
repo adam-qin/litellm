@@ -31,6 +31,10 @@ from litellm.proxy._types import (
 )
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.repositories.table_repositories import ConfigOverridesRepository
+from litellm.secret_managers.hashicorp_secret_manager import (
+    XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR,
+    SecretManagerPremiumGateError,
+)
 from litellm.types.llms.custom_http import httpxSpecialProvider
 from litellm.types.proxy.management_endpoints.config_overrides import (
     ConfigOverrideSettingsResponse,
@@ -203,6 +207,27 @@ def _set_env_vars(config_data: Dict[str, Any]) -> None:
             os.environ.pop(env_var_name, None)
 
 
+def _is_premium_gate_error(error: Exception) -> bool:
+    """True when Vault init failed only because no Enterprise license is present.
+
+    Matches on the exception type first; the string check keeps the helper
+    correct when the error crosses a process/serialization boundary.
+    """
+    return isinstance(error, SecretManagerPremiumGateError) or (
+        "only available for premium users" in str(error)
+    )
+
+
+def _premium_gate_error_detail() -> str:
+    """Actionable guidance instead of dumping upstream's enterprise sales copy."""
+    return (
+        "Hashicorp Vault secret manager requires a LiteLLM Enterprise license. "
+        "Set LITELLM_LICENSE in the proxy environment, or for XHub self-hosted "
+        "deployments set "
+        f"{XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR}=true and restart the proxy."
+    )
+
+
 def _get_hashicorp_key_management_values() -> Dict[str, Any]:
     """Return the Virtual Key storage settings currently active on this pod."""
     settings = litellm._key_management_settings or KeyManagementSettings()
@@ -351,6 +376,11 @@ async def update_hashicorp_vault_config(
         litellm._key_management_settings = previous_key_management_settings
         proxy_config._last_hashicorp_vault_config = previous_cached_config
         verbose_proxy_logger.exception("Error reinitializing Hashicorp Vault secret manager: %s", str(e))
+        if _is_premium_gate_error(e):
+            raise HTTPException(
+                status_code=403,
+                detail=_premium_gate_error_detail(),
+            )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to initialize secret manager: {e}",
