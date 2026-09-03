@@ -112,11 +112,15 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         assert data["vault_token"] == "enc_my-secret-vault-token"
         assert data["store_virtual_keys"] is True
         assert data["prefix_for_stored_virtual_keys"] == "enc_xhub/virtual-keys/"
+        # access_mode stays a plaintext (unencrypted) field and defaults to
+        # write_only, which keeps environment variables out of Vault lookups.
+        assert data["access_mode"] == "write_only"
         assert litellm._key_management_settings.store_virtual_keys is True
         assert (
             litellm._key_management_settings.prefix_for_stored_virtual_keys
             == "xhub/virtual-keys/"
         )
+        assert litellm._key_management_settings.access_mode == "write_only"
         mock_cfg.initialize_secret_manager.assert_called_with(
             key_management_system="hashicorp_vault"
         )
@@ -171,6 +175,7 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
             "vault_token": "enc_tok",
             "store_virtual_keys": True,
             "prefix_for_stored_virtual_keys": "enc_xhub/virtual-keys/",
+            "access_mode": "write_only",
         }
 
         # 6. DELETE: clears everything
@@ -235,6 +240,71 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         decrypted = pc._decrypt_db_variables(encrypted)
         assert all(decrypted[k] == orig[k] for k in orig)
 
+    finally:
+        litellm.secret_manager_client = old_client
+        litellm._key_management_system = old_kms
+        litellm._key_management_settings = old_settings
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_hashicorp_vault_access_mode_roundtrip(client, monkeypatch):
+    """access_mode is a plaintext (unencrypted) Vault setting that round-trips
+    through POST/GET, defaults to write_only, and is applied to the live
+    KeyManagementSettings so plain env vars are not probed in Vault."""
+    mock_prisma, mock_db = _make_mock_db()
+    mock_cfg = _make_mock_proxy_config()
+    monkeypatch.setattr(ps, "prisma_client", mock_prisma)
+    monkeypatch.setattr(ps, "proxy_config", mock_cfg)
+    old_client, old_kms = litellm.secret_manager_client, litellm._key_management_system
+    old_settings = litellm._key_management_settings
+    _set_admin()
+
+    try:
+        # 1. Explicit read_and_write is stored plaintext and applied live.
+        r = client.post(
+            VAULT_URL,
+            json={
+                "vault_addr": "https://vault.example.com",
+                "vault_token": "tok",
+                "access_mode": "read_and_write",
+            },
+        )
+        assert r.status_code == 200
+        data = _upserted_data(mock_db)
+        assert data["access_mode"] == "read_and_write"
+        assert litellm._key_management_settings.access_mode == "read_and_write"
+
+        # 2. GET returns the stored access_mode and exposes it in field_schema.
+        mock_db.find_unique = AsyncMock(return_value=_db_record(data))
+        r = client.get(VAULT_URL)
+        assert r.status_code == 200
+        assert r.json()["values"]["access_mode"] == "read_and_write"
+        assert "access_mode" in r.json()["field_schema"]["properties"]
+        assert len(r.json()["field_schema"]["properties"]["access_mode"]["description"]) > 0
+
+        # 3. Omitted access_mode falls back to the write_only default.
+        litellm._key_management_settings = KeyManagementSettings()
+        mock_db.find_unique = AsyncMock(return_value=None)
+        mock_db.upsert = AsyncMock(return_value=None)
+        r = client.post(
+            VAULT_URL, json={"vault_addr": "https://v.com", "vault_token": "tok"}
+        )
+        assert r.status_code == 200
+        assert _upserted_data(mock_db)["access_mode"] == "write_only"
+        assert litellm._key_management_settings.access_mode == "write_only"
+
+        # 4. Explicit write_only round-trips and stays plaintext.
+        r = client.post(
+            VAULT_URL,
+            json={
+                "vault_addr": "https://v.com",
+                "vault_token": "tok",
+                "access_mode": "write_only",
+            },
+        )
+        assert r.status_code == 200
+        assert _upserted_data(mock_db)["access_mode"] == "write_only"
     finally:
         litellm.secret_manager_client = old_client
         litellm._key_management_system = old_kms

@@ -137,7 +137,16 @@ HASHICORP_SENSITIVE_FIELDS: Set[str] = {
 HASHICORP_KEY_MANAGEMENT_FIELDS: Set[str] = {
     "store_virtual_keys",
     "prefix_for_stored_virtual_keys",
+    "access_mode",
 }
+
+# XHub deposits Virtual Keys in Vault; environment variables stay in the
+# environment. Reading every get_secret() from Vault 404s on each env var and
+# adds a Vault round trip per request, so the default is write-only.
+DEFAULT_HASHICORP_ACCESS_MODE = "write_only"
+
+# Non-secret settings kept as native JSON types in the DB record.
+HASHICORP_PLAINTEXT_FIELDS: Set[str] = {"store_virtual_keys", "access_mode"}
 
 _sensitive_masker = SensitiveDataMasker()
 
@@ -327,7 +336,10 @@ async def update_hashicorp_vault_config(
             if field not in config_data and env_values.get(field):
                 config_data[field] = env_values[field]
         for field, value in current_key_management_values.items():
-            if field not in config_data:
+            # access_mode keeps XHub's write_only default rather than LiteLLM's
+            # read_only default: a fresh pod with no DB record has read_only in
+            # its live settings, but XHub must not probe Vault for env vars.
+            if field != "access_mode" and field not in config_data:
                 config_data[field] = value
 
     # Strip empty strings — they signal "clear this field". A cleared Virtual
@@ -335,6 +347,7 @@ async def update_hashicorp_vault_config(
     config_data = {k: v for k, v in config_data.items() if v != ""}
     config_data.setdefault("store_virtual_keys", False)
     config_data.setdefault("prefix_for_stored_virtual_keys", "litellm/")
+    config_data.setdefault("access_mode", DEFAULT_HASHICORP_ACCESS_MODE)
 
     # Validate that the config has enough fields to initialize
     has_vault_addr = bool(config_data.get("vault_addr"))
@@ -389,17 +402,19 @@ async def update_hashicorp_vault_config(
     # Only persist to DB after successful init. If persistence fails, restore
     # the previous working client and settings so this pod does not diverge.
     try:
-        # Preserve the boolean type in the DB record. Connection strings and the
-        # Virtual Key prefix are encrypted, while store_virtual_keys remains a
-        # JSON boolean so partial updates and cross-pod reloads do not rely on
-        # string-to-boolean coercion.
+        # Preserve native JSON types for non-secret settings. Connection strings
+        # and the Virtual Key prefix are encrypted, while store_virtual_keys and
+        # access_mode stay plain so partial updates and cross-pod reloads do not
+        # rely on string coercion.
         values_to_encrypt = {
             key: value
             for key, value in config_data.items()
-            if key != "store_virtual_keys"
+            if key not in HASHICORP_PLAINTEXT_FIELDS
         }
         encrypted_data = proxy_config._encrypt_env_variables(values_to_encrypt)
-        encrypted_data["store_virtual_keys"] = config_data["store_virtual_keys"]
+        for field in HASHICORP_PLAINTEXT_FIELDS:
+            if field in config_data:
+                encrypted_data[field] = config_data[field]
         config_value = safe_dumps(encrypted_data)
         await ConfigOverridesRepository(prisma_client).table.upsert(
             where={"config_type": "hashicorp_vault"},

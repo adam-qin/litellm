@@ -14,4 +14,5 @@ export const FIELD_LABELS: Record<string, string> = {
   vault_cert_role: "Certificate Role",
   store_virtual_keys: "Automatically Store Virtual Keys",
   prefix_for_stored_virtual_keys: "Virtual Key Secret Prefix",
+  access_mode: "Access Mode",
 };

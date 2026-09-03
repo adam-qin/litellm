@@ -4,7 +4,7 @@ import { useHashicorpVaultConfig } from "@/app/(dashboard)/hooks/configOverrides
 import { useUpdateHashicorpVaultConfig } from "@/app/(dashboard)/hooks/configOverrides/useUpdateHashicorpVaultConfig";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import NotificationManager from "@/components/molecules/notifications_manager";
-import { Alert, Button, Divider, Form, Input, Modal, Space, Switch, Typography } from "antd";
+import { Alert, Button, Divider, Form, Input, Modal, Select, Space, Switch, Typography } from "antd";
 import React, { useEffect } from "react";
 import { SENSITIVE_FIELDS, FIELD_LABELS } from "./constants";
 
@@ -37,7 +37,7 @@ const FIELD_GROUPS: FieldGroup[] = [
   {
     title: "Virtual Key Storage",
     subtitle: "Store newly created XHub Virtual Keys in Vault KV v2 using a stable key alias or token ID.",
-    fields: ["store_virtual_keys", "prefix_for_stored_virtual_keys"],
+    fields: ["store_virtual_keys", "prefix_for_stored_virtual_keys", "access_mode"],
   },
 ];
 
@@ -135,6 +135,26 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
           extra="Key creation returns immediately. Vault persistence runs asynchronously and does not roll back a successfully created Key."
         >
           <Switch checkedChildren="Enabled" unCheckedChildren="Disabled" />
+        </Form.Item>
+      );
+    }
+
+    if (fieldName === "access_mode") {
+      return (
+        <Form.Item
+          key={fieldName}
+          name={fieldName}
+          label={FIELD_LABELS[fieldName] ?? fieldName}
+          extra="write_only (recommended) only deposits Virtual Keys, so environment variables are never looked up in Vault."
+        >
+          <Select
+            placeholder={fieldSchema?.description}
+            options={[
+              { value: "write_only", label: "write_only — deposit Virtual Keys only" },
+              { value: "read_only", label: "read_only — read secrets from Vault" },
+              { value: "read_and_write", label: "read_and_write — read secrets and deposit keys" },
+            ]}
+          />
         </Form.Item>
       );
     }

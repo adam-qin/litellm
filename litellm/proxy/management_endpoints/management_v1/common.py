@@ -3,8 +3,23 @@
 from urllib.parse import urlencode
 
 from fastapi import Request
-from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.responses import JSONResponse
+
+# FastAPI renamed `get_flat_dependant` to `get_flat_params` in 0.141.0 and
+# changed its return from a `Dependant` (read `.query_params`) to a flat list
+# of `ModelField`. Support both so the proxy imports across the pinned range
+# (fastapi>=0.136.3,<1.0).
+try:  # FastAPI < 0.141
+    from fastapi.dependencies.utils import get_flat_dependant as _get_flat_query_params
+
+    def _flat_query_params(dependant):
+        return _get_flat_query_params(dependant, skip_repeats=True).query_params
+
+except ImportError:  # FastAPI >= 0.141
+    from fastapi.dependencies.utils import get_flat_params as _get_flat_query_params
+
+    def _flat_query_params(dependant):
+        return _get_flat_query_params(dependant)
 
 from litellm.types.proxy.management_endpoints.management_v1 import (
     PageLinks,
@@ -40,7 +55,7 @@ def _declared_query_params(request: Request) -> frozenset[str]:
     dependant = getattr(route, "dependant", None)
     if dependant is None:
         return frozenset()
-    return frozenset(field.alias for field in get_flat_dependant(dependant, skip_repeats=True).query_params)
+    return frozenset(field.alias for field in _flat_query_params(dependant))
 
 
 async def reject_unknown_query_params(request: Request) -> None:

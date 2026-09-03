@@ -10,7 +10,7 @@ import httpx
 sys.path.insert(
     0, os.path.abspath("../..")
 )  # Adds the parent directory to the system path
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 import logging
 from litellm._logging import verbose_logger
 from litellm._uuid import uuid
@@ -22,7 +22,13 @@ import litellm.proxy.proxy_server
 
 litellm.proxy.proxy_server.premium_user = True
 
-from litellm.secret_managers.hashicorp_secret_manager import HashicorpSecretManager
+from litellm.secret_managers import hashicorp_secret_manager as hashicorp_module
+from litellm.secret_managers.hashicorp_secret_manager import (
+    DEFAULT_NEGATIVE_CACHE_TTL,
+    HashicorpSecretManager,
+    get_negative_cache_ttl,
+    is_secret_not_found_error,
+)
 
 
 @pytest.fixture
@@ -847,3 +853,128 @@ async def test_hashicorp_secret_manager_rotate_secret_value_mismatch(
         assert response["status"] == "error"
         assert "mismatch" in response["message"].lower()
         assert "expected-value" in response["message"]
+
+
+# ── Missing secrets are routine, not errors ─────────────────────────────────
+
+
+class TestHashicorpMissingSecretHandling:
+    """Once a secret manager is active, `get_secret()` probes Vault for every
+    lookup - including plain environment variables such as
+    DISABLE_ADMIN_ENDPOINTS. A 404 is therefore the expected outcome, and it
+    must neither spam ERROR logs nor repeat the round trip on every request."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_global_client(self):
+        """HashicorpSecretManager() installs itself globally; undo that."""
+        old_client = litellm.secret_manager_client
+        old_system = litellm._key_management_system
+        yield
+        litellm.secret_manager_client = old_client
+        litellm._key_management_system = old_system
+
+    @staticmethod
+    def _build_manager(monkeypatch, ttl=300):
+        monkeypatch.setenv("HCP_VAULT_ADDR", "https://vault.example.com")
+        monkeypatch.setenv("HCP_VAULT_TOKEN", "vault-token")
+        monkeypatch.delenv("HCP_VAULT_APPROLE_ROLE_ID", raising=False)
+        monkeypatch.delenv("HCP_VAULT_APPROLE_SECRET_ID", raising=False)
+        monkeypatch.delenv("HCP_VAULT_CLIENT_CERT", raising=False)
+        monkeypatch.delenv("HCP_VAULT_CLIENT_KEY", raising=False)
+        monkeypatch.setenv("HCP_VAULT_NEGATIVE_CACHE_TTL", str(ttl))
+        return HashicorpSecretManager()
+
+    @staticmethod
+    def _http_error(status_code: int) -> httpx.HTTPStatusError:
+        request = httpx.Request("GET", "https://vault.example.com/v1/secret/data/missing")
+        response = httpx.Response(status_code, request=request)
+        return httpx.HTTPStatusError(f"{status_code} error", request=request, response=response)
+
+    def test_404_returns_none_without_error_log(self, monkeypatch, caplog):
+        manager = self._build_manager(monkeypatch)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = self._http_error(404)
+
+        with caplog.at_level(logging.DEBUG):
+            with patch.object(hashicorp_module, "_get_httpx_client") as mock_client_fn:
+                mock_client = MagicMock()
+                mock_client.get.return_value = mock_response
+                mock_client_fn.return_value = mock_client
+                assert manager.sync_read_secret("DISABLE_ADMIN_ENDPOINTS") is None
+
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_404_is_negatively_cached(self, monkeypatch):
+        manager = self._build_manager(monkeypatch, ttl=300)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = self._http_error(404)
+
+        with patch.object(hashicorp_module, "_get_httpx_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.get.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            assert manager.sync_read_secret("SOME_ENV_VAR") is None
+            assert mock_client.get.call_count == 1
+            # Second lookup within the TTL window must not hit Vault again.
+            assert manager.sync_read_secret("SOME_ENV_VAR") is None
+            assert mock_client.get.call_count == 1
+
+    def test_negative_cache_can_be_disabled(self, monkeypatch):
+        manager = self._build_manager(monkeypatch, ttl=0)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = self._http_error(404)
+
+        with patch.object(hashicorp_module, "_get_httpx_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.get.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            assert manager.sync_read_secret("SOME_ENV_VAR") is None
+            assert manager.sync_read_secret("SOME_ENV_VAR") is None
+            assert mock_client.get.call_count == 2
+
+    def test_non_404_still_logs_an_error(self, monkeypatch, caplog):
+        manager = self._build_manager(monkeypatch)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = self._http_error(503)
+
+        with caplog.at_level(logging.DEBUG):
+            with patch.object(hashicorp_module, "_get_httpx_client") as mock_client_fn:
+                mock_client = MagicMock()
+                mock_client.get.return_value = mock_response
+                mock_client_fn.return_value = mock_client
+                assert manager.sync_read_secret("SOME_ENV_VAR") is None
+
+        assert "Error reading secret from Hashicorp Vault" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_async_404_returns_none_and_caches(self, monkeypatch, caplog):
+        manager = self._build_manager(monkeypatch)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = self._http_error(404)
+
+        with caplog.at_level(logging.DEBUG):
+            with patch.object(hashicorp_module, "get_async_httpx_client") as mock_client_fn:
+                mock_client = MagicMock()
+                mock_client.get = AsyncMock(return_value=mock_response)
+                mock_client_fn.return_value = mock_client
+
+                assert await manager.async_read_secret("SOME_ENV_VAR") is None
+                assert await manager.async_read_secret("SOME_ENV_VAR") is None
+                assert mock_client.get.await_count == 1
+
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_is_secret_not_found_error(self):
+        assert is_secret_not_found_error(self._http_error(404)) is True
+        assert is_secret_not_found_error(self._http_error(403)) is False
+        assert is_secret_not_found_error(ValueError("boom")) is False
+
+    def test_negative_cache_ttl_parsing(self, monkeypatch):
+        monkeypatch.setenv("HCP_VAULT_NEGATIVE_CACHE_TTL", "60")
+        assert get_negative_cache_ttl() == 60
+        monkeypatch.setenv("HCP_VAULT_NEGATIVE_CACHE_TTL", "not-a-number")
+        assert get_negative_cache_ttl() == DEFAULT_NEGATIVE_CACHE_TTL
+        monkeypatch.setenv("HCP_VAULT_NEGATIVE_CACHE_TTL", "-5")
+        assert get_negative_cache_ttl() == 0

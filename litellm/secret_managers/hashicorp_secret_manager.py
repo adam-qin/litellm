@@ -23,6 +23,15 @@ from .base_secret_manager import BaseSecretManager, raise_if_unsafe_secret_name
 XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR = "XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS"
 _TRUTHY_ENV_VALUES = ("true", "1", "yes", "on")
 
+# Vault is consulted for *every* `get_secret()` call once a secret manager is
+# active, including plain environment lookups (e.g. DISABLE_ADMIN_ENDPOINTS).
+# A missing key is therefore the common case, not an incident: it is logged at
+# debug level and remembered for a short window so a hot request path does not
+# hammer Vault with the same 404. Set to 0 to disable negative caching.
+NEGATIVE_CACHE_ENV_VAR = "HCP_VAULT_NEGATIVE_CACHE_TTL"
+DEFAULT_NEGATIVE_CACHE_TTL = 300
+_MISSING_SECRET = "__LITELLM_VAULT_SECRET_MISSING__"
+
 
 class SecretManagerPremiumGateError(ValueError):
     """Raised when a secret manager is gated behind a LiteLLM Enterprise license.
@@ -42,6 +51,22 @@ def _xhub_community_secret_manager_enabled() -> bool:
         os.getenv(XHUB_COMMUNITY_SECRET_MANAGER_ENV_VAR, "false").strip().lower()
         in _TRUTHY_ENV_VALUES
     )
+
+
+def is_secret_not_found_error(error: Exception) -> bool:
+    """True when Vault simply has no entry at the requested path (HTTP 404)."""
+    response = getattr(error, "response", None)
+    return getattr(response, "status_code", None) == 404
+
+
+def get_negative_cache_ttl() -> int:
+    """How long (seconds) a 404 is remembered. 0 disables negative caching."""
+    raw = os.getenv(NEGATIVE_CACHE_ENV_VAR, str(DEFAULT_NEGATIVE_CACHE_TTL))
+    try:
+        ttl = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_NEGATIVE_CACHE_TTL
+    return max(ttl, 0)
 
 
 class HashicorpSecretManager(BaseSecretManager):
@@ -87,6 +112,7 @@ class HashicorpSecretManager(BaseSecretManager):
         _refresh_interval = os.environ.get("HCP_VAULT_REFRESH_INTERVAL", SECRET_MANAGER_REFRESH_INTERVAL)
         _refresh_interval = int(_refresh_interval) if _refresh_interval else SECRET_MANAGER_REFRESH_INTERVAL
         self.cache = InMemoryCache(default_ttl=_refresh_interval)  # store in memory for 1 day
+        self._negative_cache_ttl = get_negative_cache_ttl()
 
     def _verify_required_credentials_exist(self) -> None:
         """
@@ -349,8 +375,12 @@ class HashicorpSecretManager(BaseSecretManager):
         secret_name is just the path inside the KV mount (e.g., 'myapp/config').
         Returns the entire data dict from data.data, or None on failure.
         """
-        if self.cache.get_cache(secret_name) is not None:
-            return self.cache.get_cache(secret_name)
+        cached = self.cache.get_cache(secret_name)
+        if cached == _MISSING_SECRET:
+            verbose_logger.debug("Hashicorp Vault has no secret named %s (cached miss)", secret_name)
+            return None
+        if cached is not None:
+            return cached
         async_client = get_async_httpx_client(
             llm_provider=httpxSpecialProvider.SecretManager,
         )
@@ -370,6 +400,13 @@ class HashicorpSecretManager(BaseSecretManager):
             return _value
 
         except Exception as e:
+            if is_secret_not_found_error(e):
+                # Expected for environment-variable lookups: the caller falls
+                # back to os.environ, so this is not an error worth a traceback.
+                verbose_logger.debug("No secret named %s in Hashicorp Vault; using fallback source", secret_name)
+                if self._negative_cache_ttl > 0:
+                    self.cache.set_cache(secret_name, _MISSING_SECRET, ttl=self._negative_cache_ttl)
+                return None
             verbose_logger.exception(f"Error reading secret from Hashicorp Vault: {e}")
             return None
 
@@ -384,8 +421,12 @@ class HashicorpSecretManager(BaseSecretManager):
         secret_name is just the path inside the KV mount (e.g., 'myapp/config').
         Returns the entire data dict from data.data, or None on failure.
         """
-        if self.cache.get_cache(secret_name) is not None:
-            return self.cache.get_cache(secret_name)
+        cached = self.cache.get_cache(secret_name)
+        if cached == _MISSING_SECRET:
+            verbose_logger.debug("Hashicorp Vault has no secret named %s (cached miss)", secret_name)
+            return None
+        if cached is not None:
+            return cached
         sync_client = _get_httpx_client()
         try:
             # For KV v2: /v1/<mount>/data/<path>
@@ -401,6 +442,13 @@ class HashicorpSecretManager(BaseSecretManager):
             return _value
 
         except Exception as e:
+            if is_secret_not_found_error(e):
+                # Expected for environment-variable lookups: the caller falls
+                # back to os.environ, so this is not an error worth a traceback.
+                verbose_logger.debug("No secret named %s in Hashicorp Vault; using fallback source", secret_name)
+                if self._negative_cache_ttl > 0:
+                    self.cache.set_cache(secret_name, _MISSING_SECRET, ttl=self._negative_cache_ttl)
+                return None
             verbose_logger.exception(f"Error reading secret from Hashicorp Vault: {e}")
             return None
 

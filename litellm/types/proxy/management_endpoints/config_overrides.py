@@ -1,6 +1,8 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+VaultAccessMode = Literal["write_only", "read_only", "read_and_write"]
 
 
 class HashicorpVaultConfig(BaseModel):
@@ -57,6 +59,14 @@ class HashicorpVaultConfig(BaseModel):
     prefix_for_stored_virtual_keys: Optional[str] = Field(
         default=None,
         description="Prefix used for Virtual Key secret names (default: litellm/)",
+    )
+    access_mode: Optional[VaultAccessMode] = Field(
+        default=None,
+        description=(
+            "How XHub uses Vault. 'write_only' (default) only deposits Virtual Keys, so "
+            "environment variables are never looked up in Vault. Use 'read_only' or "
+            "'read_and_write' only if you also keep environment secrets in Vault."
+        ),
     )
 
 

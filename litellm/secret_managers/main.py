@@ -335,9 +335,17 @@ def get_secret(
                     key_management_settings=key_management_settings,
                 )
             except Exception as e:  # check if it's in os.environ
-                verbose_logger.error(
-                    f"Defaulting to os.environ value for key={secret_name}. An exception occurred - {str(e)}.\n\n{traceback.format_exc()}"
-                )
+                if _is_secret_missing_error(e):
+                    # A secret manager is configured, so every environment lookup
+                    # probes it first. "No such entry" is the normal outcome for
+                    # plain env vars - log at debug to avoid an ERROR storm.
+                    verbose_logger.debug(
+                        f"No entry for key={secret_name} in the secret manager; defaulting to os.environ value."
+                    )
+                else:
+                    verbose_logger.error(
+                        f"Defaulting to os.environ value for key={secret_name}. An exception occurred - {str(e)}.\n\n{traceback.format_exc()}"
+                    )
                 secret = os.getenv(secret_name)
             try:
                 if isinstance(secret, str):
@@ -360,6 +368,19 @@ def get_secret(
             return default_value
         else:
             raise e
+
+
+def _is_secret_missing_error(error: Exception) -> bool:
+    """True when the secret manager simply has no entry for the requested key.
+
+    Secret managers raise a "No secret found in ..." ValueError, or surface the
+    underlying HTTP 404, when the key does not exist. Falling back to
+    ``os.environ`` is the designed behaviour in that case, not a failure.
+    """
+    if "No secret found in" in str(error):
+        return True
+    response = getattr(error, "response", None)
+    return getattr(response, "status_code", None) == 404
 
 
 def _should_read_secret_from_secret_manager() -> bool:
