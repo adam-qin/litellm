@@ -65,6 +65,10 @@ const EditHashicorpVaultModal: React.FC<EditHashicorpVaultModalProps> = ({ isVis
       description: "Prefix used for Virtual Key secret names",
       type: "string",
     },
+    access_mode: {
+      description: "How XHub uses Vault: write_only deposits Virtual Keys only",
+      type: "string",
+    },
   };
   const effectiveProperties = { ...virtualKeyStorageFields, ...properties };
 

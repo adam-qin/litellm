@@ -12,8 +12,10 @@ import litellm.proxy.proxy_server as ps
 from litellm.proxy._types import KeyManagementSystem, LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.management_endpoints.config_override_endpoints import (
     HASHICORP_ENV_VAR_MAPPING,
+    _apply_hashicorp_key_management_settings,
     _build_field_schema,
     _is_premium_gate_error,
+    _reset_hashicorp_key_management_settings,
     _set_env_vars,
 )
 from litellm.secret_managers.hashicorp_secret_manager import (
@@ -187,6 +189,7 @@ async def test_hashicorp_vault_crud_lifecycle(client, monkeypatch):
         assert litellm.secret_manager_client is None
         assert litellm._key_management_settings.store_virtual_keys is False
         assert litellm._key_management_settings.prefix_for_stored_virtual_keys == "litellm/"
+        assert litellm._key_management_settings.access_mode == "write_only"
 
         # 7. DELETE idempotent
         mock_db.delete = AsyncMock(
@@ -305,11 +308,52 @@ async def test_hashicorp_vault_access_mode_roundtrip(client, monkeypatch):
         )
         assert r.status_code == 200
         assert _upserted_data(mock_db)["access_mode"] == "write_only"
+
+        # 5. Legacy DB records without access_mode still render write_only.
+        mock_db.find_unique = AsyncMock(
+            return_value=_db_record(
+                {
+                    "vault_addr": "enc_https://vault.example.com",
+                    "vault_token": "enc_tok",
+                    "store_virtual_keys": True,
+                    "prefix_for_stored_virtual_keys": "enc_litellm/",
+                }
+            )
+        )
+        r = client.get(VAULT_URL)
+        assert r.status_code == 200
+        assert r.json()["values"]["access_mode"] == "write_only"
     finally:
         litellm.secret_manager_client = old_client
         litellm._key_management_system = old_kms
         litellm._key_management_settings = old_settings
         _cleanup()
+
+
+def test_hashicorp_legacy_access_mode_defaults_to_write_only():
+    """Existing Vault configs saved before access_mode existed must not fall
+    back to LiteLLM's read_only default on pod reload / DELETE cleanup."""
+    old_settings = litellm._key_management_settings
+    try:
+        litellm._key_management_settings = KeyManagementSettings(access_mode="read_only")
+        _apply_hashicorp_key_management_settings(
+            {
+                "store_virtual_keys": True,
+                "prefix_for_stored_virtual_keys": "litellm/",
+            }
+        )
+        assert litellm._key_management_settings.access_mode == "write_only"
+        assert litellm._key_management_settings.store_virtual_keys is True
+
+        litellm._key_management_settings = KeyManagementSettings(
+            store_virtual_keys=True,
+            access_mode="read_and_write",
+        )
+        _reset_hashicorp_key_management_settings()
+        assert litellm._key_management_settings.store_virtual_keys is False
+        assert litellm._key_management_settings.access_mode == "write_only"
+    finally:
+        litellm._key_management_settings = old_settings
 
 
 @pytest.mark.asyncio

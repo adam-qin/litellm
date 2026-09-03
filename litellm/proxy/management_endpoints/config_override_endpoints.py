@@ -247,12 +247,19 @@ def _get_hashicorp_key_management_values() -> Dict[str, Any]:
 
 
 def _apply_hashicorp_key_management_settings(config_data: Mapping[str, Any]) -> None:
-    """Apply Vault-owned Virtual Key settings while preserving unrelated KMS options."""
+    """Apply Vault-owned Virtual Key settings while preserving unrelated KMS options.
+
+    Records saved before ``access_mode`` existed omit the field. Default those to
+    ``write_only`` so a pod reload of an existing Vault config does not fall back
+    to LiteLLM's ``read_only`` default and start probing environment variables.
+    """
     current_settings = litellm._key_management_settings or KeyManagementSettings()
     settings_data = current_settings.model_dump(exclude_none=False)
     for field in HASHICORP_KEY_MANAGEMENT_FIELDS:
         if field in config_data:
             settings_data[field] = config_data[field]
+    if "access_mode" not in config_data:
+        settings_data["access_mode"] = DEFAULT_HASHICORP_ACCESS_MODE
     litellm._key_management_settings = KeyManagementSettings(**settings_data)
 
 
@@ -262,6 +269,7 @@ def _reset_hashicorp_key_management_settings() -> None:
         {
             "store_virtual_keys": False,
             "prefix_for_stored_virtual_keys": "litellm/",
+            "access_mode": DEFAULT_HASHICORP_ACCESS_MODE,
         }
     )
 
@@ -503,6 +511,7 @@ async def get_hashicorp_vault_config(
         # Decrypt then mask sensitive fields so plaintext secrets are never sent to the UI
         decrypted_data = proxy_config._decrypt_db_variables(config_data)
         masked_data = _mask_sensitive_fields(decrypted_data, HASHICORP_SENSITIVE_FIELDS)
+        masked_data.setdefault("access_mode", DEFAULT_HASHICORP_ACCESS_MODE)
 
         return ConfigOverrideSettingsResponse(
             config_type="hashicorp_vault",

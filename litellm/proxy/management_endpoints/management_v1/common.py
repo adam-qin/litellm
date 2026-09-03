@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 
 # FastAPI renamed `get_flat_dependant` to `get_flat_params` in 0.141.0 and
 # changed its return from a `Dependant` (read `.query_params`) to a flat list
-# of `ModelField`. Support both so the proxy imports across the pinned range
-# (fastapi>=0.136.3,<1.0).
+# of `ModelField` that also includes path/header params. Support both and keep
+# the allowed set to Query-only so reject_unknown_query_params stays strict.
 try:  # FastAPI < 0.141
     from fastapi.dependencies.utils import get_flat_dependant as _get_flat_query_params
 
@@ -17,9 +17,14 @@ try:  # FastAPI < 0.141
 
 except ImportError:  # FastAPI >= 0.141
     from fastapi.dependencies.utils import get_flat_params as _get_flat_query_params
+    from fastapi.params import Query as QueryParam
 
     def _flat_query_params(dependant):
-        return _get_flat_query_params(dependant)
+        return [
+            field
+            for field in _get_flat_query_params(dependant)
+            if isinstance(getattr(field, "field_info", None), QueryParam)
+        ]
 
 from litellm.types.proxy.management_endpoints.management_v1 import (
     PageLinks,
