@@ -1,6 +1,6 @@
 # XHub Docker 构建方案
 
-本方案基于 LiteLLM `v1.95.21` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
+本方案基于 LiteLLM `v1.95.22` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
 
 ## 方案选择
 
@@ -20,7 +20,7 @@
 docker build \
   --file Dockerfile \
   --target runtime \
-  --tag xhub/litellm:1.95.21 \
+  --tag xhub/litellm:1.95.22 \
   .
 ```
 
@@ -31,7 +31,7 @@ docker build \
   --file docker/Dockerfile.non_root \
   --target runtime \
   --build-arg PROXY_EXTRAS_SOURCE=local \
-  --tag xhub/litellm:1.95.21-nonroot \
+  --tag xhub/litellm:1.95.22-nonroot \
   .
 ```
 
@@ -134,8 +134,8 @@ docker compose \
 ## E2E 使用本地 XHub 镜像
 
 ```bash
-docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.21 .
-LITELLM_E2E_IMAGE=xhub/litellm:1.95.21 \
+docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.22 .
+LITELLM_E2E_IMAGE=xhub/litellm:1.95.22 \
   docker compose -f tests/e2e/docker-compose.yml up -d
 ```
 
@@ -144,8 +144,8 @@ LITELLM_E2E_IMAGE=xhub/litellm:1.95.21 \
 正式发布时不要只使用 `latest`。建议使用：
 
 ```text
-xhub/litellm:1.95.21-<git-commit>
-xhub/litellm:1.95.21-nonroot-<git-commit>
+xhub/litellm:1.95.22-<git-commit>
+xhub/litellm:1.95.22-nonroot-<git-commit>
 ```
 
 并额外记录镜像 digest、Dockerfile、构建参数、`uv.lock` 和 `package-lock.json` 哈希，以及 UI 测试、镜像扫描和容器健康检查结果。
