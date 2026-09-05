@@ -3308,8 +3308,47 @@ async def ui_view_session_spend_logs(
                 detail="Database not connected",
             )
 
-        # Build query conditions
-        where_conditions = {"session_id": session_id}
+        # Build query conditions. Non-admins must reuse /spend/logs/v2 User/Team
+        # scope so a guessed session_id cannot leak other tenants' logs.
+        where_conditions: dict[str, Any] = {"session_id": session_id}
+        sql_conditions = ["session_id = $1"]
+        sql_params: List[Any] = [session_id]
+        param_index = 2
+
+        is_admin_view = _is_admin_view_safe(user_api_key_dict=user_api_key_dict)
+        if not is_admin_view:
+            caller_user_id, permitted_team_ids = await _get_non_admin_spend_log_scope(
+                prisma_client=prisma_client,
+                user_api_key_dict=user_api_key_dict,
+            )
+            if not caller_user_id and not permitted_team_ids:
+                return {
+                    "data": [],
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": 0,
+                }
+            if permitted_team_ids and caller_user_id:
+                where_conditions["OR"] = [
+                    {"user": caller_user_id},
+                    {"team_id": {"in": permitted_team_ids}},
+                ]
+                sql_conditions.append(
+                    f'("user" = ${param_index} OR team_id = ANY(${param_index + 1}::text[]))'
+                )
+                sql_params.extend([caller_user_id, permitted_team_ids])
+                param_index += 2
+            elif caller_user_id:
+                where_conditions["user"] = caller_user_id
+                sql_conditions.append(f'"user" = ${param_index}')
+                sql_params.append(caller_user_id)
+                param_index += 1
+            else:
+                where_conditions["team_id"] = {"in": permitted_team_ids}
+                sql_conditions.append(f"team_id = ANY(${param_index}::text[])")
+                sql_params.append(permitted_team_ids)
+                param_index += 1
 
         # Calculate pagination offsets
         skip = (page - 1) * page_size
@@ -3318,7 +3357,7 @@ async def ui_view_session_spend_logs(
         total_records = await SpendLogsRepository(prisma_client).table.count(where=where_conditions)
 
         # Query with raw SQL to exclude heavy columns (messages, response, proxy_server_request)
-        sql_query = """
+        sql_query = f"""
             SELECT
                 request_id, call_type, api_key, spend, total_tokens,
                 prompt_tokens, completion_tokens, "startTime", "endTime",
@@ -3328,11 +3367,11 @@ async def ui_view_session_spend_logs(
                 organization_id, end_user, requester_ip_address,
                 session_id, status, mcp_namespaced_tool_name, agent_id
             FROM "LiteLLM_SpendLogs"
-            WHERE session_id = $1
+            WHERE {" AND ".join(sql_conditions)}
             ORDER BY "startTime" DESC
-            LIMIT $2 OFFSET $3
+            LIMIT ${param_index} OFFSET ${param_index + 1}
         """
-        result = await prisma_client.db.query_raw(sql_query, session_id, page_size, skip)
+        result = await prisma_client.db.query_raw(sql_query, *sql_params, page_size, skip)
 
         total_pages = (total_records + page_size - 1) // page_size
 
@@ -3572,6 +3611,29 @@ def _can_user_view_spend_log(user_api_key_dict: UserAPIKeyAuth) -> bool:
         )
         and user_id is not None
     )
+
+
+async def _get_non_admin_spend_log_scope(
+    prisma_client,
+    user_api_key_dict: UserAPIKeyAuth,
+) -> tuple[str | None, List[str]]:
+    """
+    Return ``(caller_user_id, permitted_team_ids)`` for non-admin spend queries.
+
+    Missing identity with no permitted teams is fail-closed: callers must not
+    see other tenants' session or request logs.
+    """
+    caller_user_id = getattr(user_api_key_dict, "user_id", None)
+    permitted_team_ids: List[str] = []
+    if _can_user_view_spend_log(user_api_key_dict=user_api_key_dict):
+        try:
+            permitted_team_ids = await _get_permitted_team_ids_for_spend_logs(
+                prisma_client=prisma_client,
+                user_api_key_dict=user_api_key_dict,
+            )
+        except Exception:
+            permitted_team_ids = []
+    return caller_user_id, permitted_team_ids
 
 
 async def _assert_user_can_view_request_id(

@@ -13,12 +13,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.management_endpoints.fallback_management_endpoints import (
     FallbackCreateRequest,
     create_fallback,
     delete_fallback,
     get_fallback,
 )
+
+
+def _admin_user() -> UserAPIKeyAuth:
+    return UserAPIKeyAuth(user_id="admin", user_role=LitellmUserRoles.PROXY_ADMIN)
+
+
+def _non_admin_users() -> list[UserAPIKeyAuth]:
+    return [
+        UserAPIKeyAuth(user_id="internal", user_role=LitellmUserRoles.INTERNAL_USER),
+        UserAPIKeyAuth(user_id="org-admin", user_role=LitellmUserRoles.ORG_ADMIN),
+        UserAPIKeyAuth(user_id="team", user_role=LitellmUserRoles.TEAM),
+        UserAPIKeyAuth(
+            user_id="viewer", user_role=LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY
+        ),
+    ]
 
 
 class TestFallbackCreateRequest:
@@ -135,8 +151,8 @@ class TestCreateFallback:
 
     @pytest.fixture
     def mock_user_api_key_dict(self):
-        """Create a mock user API key dict"""
-        return MagicMock()
+        """Existing success paths require a proxy admin after the authorization guard."""
+        return _admin_user()
 
     async def test_create_fallback_success(
         self, mock_router, mock_prisma_client, mock_proxy_config, mock_user_api_key_dict
@@ -346,6 +362,21 @@ class TestCreateFallback:
             # Verify the correct attribute was updated
             assert hasattr(mock_router, "context_window_fallbacks")
 
+    @pytest.mark.parametrize("caller", _non_admin_users())
+    async def test_create_fallback_rejects_non_admin(
+        self, mock_router, mock_prisma_client, mock_proxy_config, caller
+    ):
+        request = FallbackCreateRequest(
+            model="gpt-3.5-turbo",
+            fallback_models=["gpt-4"],
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await create_fallback(request, caller)
+
+        assert exc_info.value.status_code == 403
+        assert "Only proxy admins can manage fallbacks" in str(exc_info.value.detail)
+        mock_prisma_client.db.litellm_config.upsert.assert_not_called()
+
 
 @pytest.mark.asyncio
 class TestGetFallback:
@@ -362,8 +393,8 @@ class TestGetFallback:
 
     @pytest.fixture
     def mock_user_api_key_dict(self):
-        """Create a mock user API key dict"""
-        return MagicMock()
+        """Existing success paths require a proxy admin after the authorization guard."""
+        return _admin_user()
 
     async def test_get_fallback_success(
         self, mock_router_with_fallbacks, mock_user_api_key_dict
@@ -411,6 +442,16 @@ class TestGetFallback:
         assert exc_info.value.status_code == 500
         assert "Router not initialized" in str(exc_info.value.detail)
 
+    @pytest.mark.parametrize("caller", _non_admin_users())
+    async def test_get_fallback_rejects_non_admin(
+        self, mock_router_with_fallbacks, caller
+    ):
+        with pytest.raises(HTTPException) as trans_exc:
+            await get_fallback("gpt-3.5-turbo", "general", caller)
+
+        assert trans_exc.value.status_code == 403
+        assert "Only proxy admins can manage fallbacks" in str(trans_exc.value.detail)
+
 
 @pytest.mark.asyncio
 class TestDeleteFallback:
@@ -448,8 +489,8 @@ class TestDeleteFallback:
 
     @pytest.fixture
     def mock_user_api_key_dict(self):
-        """Create a mock user API key dict"""
-        return MagicMock()
+        """Existing success paths require a proxy admin after the authorization guard."""
+        return _admin_user()
 
     async def test_delete_fallback_success(
         self,
@@ -553,3 +594,14 @@ class TestDeleteFallback:
 
         assert exc_info.value.status_code == 400
         assert "Database storage not enabled" in str(exc_info.value.detail)
+
+    @pytest.mark.parametrize("caller", _non_admin_users())
+    async def test_delete_fallback_rejects_non_admin(
+        self, mock_router_with_fallbacks, mock_prisma_client, mock_proxy_config, caller
+    ):
+        with pytest.raises(HTTPException) as trans_info:
+            await delete_fallback("gpt-3.5-turbo", "general", caller)
+
+        assert trans_info.value.status_code == 403
+        assert "Only proxy admins can manage fallbacks" in str(trans_info.value.detail)
+        mock_prisma_client.db.litellm_config.upsert.assert_not_called()

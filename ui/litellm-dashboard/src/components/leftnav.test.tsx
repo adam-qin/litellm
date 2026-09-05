@@ -93,6 +93,7 @@ describe("Sidebar (leftnav)", () => {
       "日志",
       "团队",
       "内部用户",
+      "组织",
       "访问组",
       "预算",
       "护栏",
@@ -113,7 +114,6 @@ describe("Sidebar (leftnav)", () => {
       "Agentic",
       "MCP Servers",
       "Skills",
-      "Organizations",
       "AI Hub",
       "Learning Resources",
       "Experimental",
@@ -188,7 +188,7 @@ describe("Sidebar (leftnav)", () => {
     expect(screen.queryByText("策略")).not.toBeInTheDocument();
   });
 
-  it("shows Internal Users but not Organizations for organization admins", () => {
+  it("shows Internal Users and Organizations for organization admins", () => {
     Object.assign(authState, {
       userId: "org-admin-user-id",
       accessToken: "test-access-token",
@@ -226,7 +226,7 @@ describe("Sidebar (leftnav)", () => {
       group.items.map((item) => (typeof item.label === "string" ? item.label : item.key)),
     );
     expect(visibleLabels).toContain("内部用户");
-    expect(visibleLabels).not.toContain("Organizations");
+    expect(visibleLabels).toContain("组织");
   });
 
   it("marks the selected page's nav item active", () => {

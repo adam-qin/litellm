@@ -664,6 +664,103 @@ async def test_model_info_v1_litellm_model_id_include_team_models_filters_inacce
 
 
 @pytest.mark.asyncio
+async def test_model_info_v1_litellm_model_id_default_path_hides_inaccessible_byok(
+    monkeypatch,
+):
+    """Default `/v1/model/info?litellm_model_id=` must hide another team's BYOK
+    row even when the caller omits `include_team_models=true`."""
+    team_row = _team_row()
+    router = MagicMock()
+    deployment = MagicMock()
+    deployment.model_dump.return_value = team_row
+    router.get_deployment.return_value = deployment
+
+    async def _fake_populate(**kwargs):
+        for model in kwargs["all_models"]:
+            model["model_info"]["direct_access"] = False
+            model["model_info"]["access_via_team_ids"] = []
+        return kwargs["all_models"]
+
+    monkeypatch.setattr(ps, "user_model", None)
+    monkeypatch.setattr(ps, "llm_model_list", [team_row])
+    monkeypatch.setattr(ps, "llm_router", router)
+    monkeypatch.setattr(ps, "prisma_client", MagicMock())
+    monkeypatch.setattr(ps, "_get_proxy_model_info", lambda model: team_row)
+    monkeypatch.setattr(ps, "_populate_team_access_on_models", _fake_populate)
+    monkeypatch.setattr(
+        ps, "_get_caller_byok_team_scope", AsyncMock(return_value={"other-team"})
+    )
+
+    caller = UserAPIKeyAuth(
+        user_id="u",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id="other-team",
+        team_models=[],
+    )
+    resp = await ps.model_info_v1(
+        user_api_key_dict=caller,
+        litellm_model_id="byok-id-1",
+        include_team_models=False,
+    )
+
+    assert resp["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_model_info_v2_model_id_default_path_hides_inaccessible_byok(monkeypatch):
+    """Default `/v2/model/info?modelId=` must hide another team's BYOK row even
+    when the caller omits `include_team_models=true`."""
+    team_row = _team_row()
+    router = MagicMock()
+    router.model_list = [team_row]
+    router.get_model_info.return_value = team_row
+
+    monkeypatch.setattr(ps, "llm_router", router)
+    monkeypatch.setattr(ps, "prisma_client", MagicMock())
+    monkeypatch.setattr(ps.proxy_config, "get_config", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        ps, "_enrich_model_info_with_litellm_data", lambda model, **kw: model
+    )
+    monkeypatch.setattr(
+        ps, "_get_caller_byok_team_scope", AsyncMock(return_value={"other-team"})
+    )
+    monkeypatch.setattr(
+        ps, "get_all_team_and_direct_access_models", AsyncMock(return_value=[])
+    )
+    import litellm.proxy.agent_endpoints.model_list_helpers as mlh
+
+    monkeypatch.setattr(
+        mlh,
+        "append_agents_to_model_info",
+        AsyncMock(side_effect=lambda models, **kw: models),
+    )
+
+    caller = UserAPIKeyAuth(
+        user_id="u",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id="other-team",
+        team_models=[],
+    )
+    resp = await ps.model_info_v2(
+        user_api_key_dict=caller,
+        model=None,
+        user_models_only=False,
+        include_team_models=False,
+        debug=False,
+        page=1,
+        size=50,
+        search=None,
+        modelId="byok-id-1",
+        teamId=None,
+        sortBy=None,
+        sortOrder="asc",
+    )
+
+    assert resp["data"] == []
+    assert resp["total_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_model_info_v1_litellm_model_id_team_id_applies_team_filter(monkeypatch):
     """`litellm_model_id` + `teamId` must run the teamId filter on the single model
     rather than returning it regardless of the team's access."""

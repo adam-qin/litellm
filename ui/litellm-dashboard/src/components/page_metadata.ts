@@ -24,7 +24,7 @@ export const pageDescriptions: Record<string, string> = {
   "guardrails-monitor": "Monitor guardrail performance and view logs",
   users: "Manage internal user accounts and permissions",
   teams: "Create and manage teams for access control",
-  organizations: "Manage organizations and their members",
+  organizations: "Manage organizations and isolate teams, keys, and members by org",
   projects: "Manage projects within teams",
   "access-groups": "Manage access groups for role-based permissions",
   budgets: "Set and monitor spending budgets",

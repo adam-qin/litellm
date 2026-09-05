@@ -15,10 +15,9 @@ import OrganizationsTable from "./OrganizationsTable";
 interface OrganizationsPanelProps {
   userRole: string;
   accessToken: string | null;
-  premiumUser: boolean;
 }
 
-const OrganizationsPanel: React.FC<OrganizationsPanelProps> = ({ userRole, accessToken, premiumUser }) => {
+const OrganizationsPanel: React.FC<OrganizationsPanelProps> = ({ userRole, accessToken }) => {
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [editOrg, setEditOrg] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -76,25 +75,6 @@ const OrganizationsPanel: React.FC<OrganizationsPanelProps> = ({ userRole, acces
     setIsDeleteModalOpen(false);
     setOrgToDelete(null);
   };
-
-  if (!premiumUser) {
-    return (
-      <div className="mx-4 mt-4">
-        <p className="text-sm text-muted-foreground">
-          This is a LiteLLM Enterprise feature, and requires a valid key to use. Get a trial key{" "}
-          <a
-            href="https://www.litellm.ai/#pricing"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            here
-          </a>
-          .
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="mx-4 mt-4 flex flex-col gap-4">

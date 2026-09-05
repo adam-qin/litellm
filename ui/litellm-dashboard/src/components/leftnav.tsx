@@ -25,6 +25,7 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  Building2,
   ChevronRight,
   KeyRound,
   Network,
@@ -123,6 +124,13 @@ const menuGroups: MenuGroup[] = [
     items: [
       { key: "teams", page: "teams", label: "团队", icon: <Users {...ICON} /> },
       { key: "users", page: "users", label: "内部用户", icon: <User {...ICON} />, roles: all_admin_roles },
+      {
+        key: "organizations",
+        page: "organizations",
+        label: "组织",
+        icon: <Building2 {...ICON} />,
+        roles: all_admin_roles,
+      },
       {
         key: "access-groups",
         page: "access-groups",
@@ -236,7 +244,7 @@ export const getVisibleMenuGroups = (
       .map((item) => ({ ...item, children: item.children ? filterItemsByRole(item.children) : undefined }))
       .filter((item) => {
         if (item.children && item.children.length === 0) return false;
-        if (item.key === "users") {
+        if (item.key === "organizations" || item.key === "users") {
           const hasRoleAccess = !item.roles || item.roles.includes(userRole) || isOrgAdmin;
           if (!hasRoleAccess) return false;
           if (!isAdmin && enabledPagesInternalUsers != null) return enabledPagesInternalUsers.includes(item.page);

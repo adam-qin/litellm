@@ -1558,11 +1558,17 @@ async def test_ui_view_session_spend_logs_pagination(client, monkeypatch):
     mock_prisma_client = MockPrismaClient()
     monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma_client)
 
-    response = client.get(
-        "/spend/logs/session/ui",
-        params={"session_id": "session-123", "page": 2, "page_size": 1},
-        headers={"Authorization": "Bearer sk-test"},
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN, user_id="admin_user"
     )
+    try:
+        response = client.get(
+            "/spend/logs/session/ui",
+            params={"session_id": "session-123", "page": 2, "page_size": 1},
+            headers={"Authorization": "Bearer sk-test"},
+        )
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -1572,6 +1578,99 @@ async def test_ui_view_session_spend_logs_pagination(client, monkeypatch):
     assert data["total_pages"] == 2
     assert len(data["data"]) == 1
     assert data["data"][0]["request_id"] == "req1"
+
+
+@pytest.mark.asyncio
+async def test_ui_view_session_spend_logs_internal_user_cannot_read_other_session(
+    client, monkeypatch
+):
+    """Internal users must not read another tenant's session by guessing session_id."""
+
+    class MockDB:
+        async def count(self, *args, **kwargs):
+            raise AssertionError("non-admin foreign session must not query spend logs")
+
+        async def query_raw(self, *args, **kwargs):
+            raise AssertionError("non-admin foreign session must not query spend logs")
+
+    class MockPrismaClient:
+        def __init__(self):
+            self.db = MockDB()
+            self.db.litellm_spendlogs = self.db
+
+    monkeypatch.setattr(
+        "litellm.proxy.proxy_server.prisma_client", MockPrismaClient()
+    )
+    monkeypatch.setattr(
+        "litellm.proxy.spend_tracking.spend_management_endpoints._get_non_admin_spend_log_scope",
+        AsyncMock(return_value=(None, [])),
+    )
+
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER, user_id=None
+    )
+    try:
+        response = client.get(
+            "/spend/logs/session/ui",
+            params={"session_id": "other-tenant-session", "page": 1, "page_size": 50},
+            headers={"Authorization": "Bearer sk-test"},
+        )
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data"] == []
+    assert data["total"] == 0
+    assert data["total_pages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ui_view_session_spend_logs_internal_user_scopes_sql_to_self(
+    client, monkeypatch
+):
+    captured = {}
+
+    class MockDB:
+        async def count(self, *args, **kwargs):
+            captured["where"] = kwargs.get("where")
+            return 0
+
+        async def query_raw(self, sql_query, *params):
+            captured["sql"] = sql_query
+            captured["params"] = params
+            return []
+
+    class MockPrismaClient:
+        def __init__(self):
+            self.db = MockDB()
+            self.db.litellm_spendlogs = self.db
+
+    monkeypatch.setattr(
+        "litellm.proxy.proxy_server.prisma_client", MockPrismaClient()
+    )
+    monkeypatch.setattr(
+        "litellm.proxy.spend_tracking.spend_management_endpoints._get_non_admin_spend_log_scope",
+        AsyncMock(return_value=("internal_user_1", [])),
+    )
+
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER, user_id="internal_user_1"
+    )
+    try:
+        response = client.get(
+            "/spend/logs/session/ui",
+            params={"session_id": "session-123", "page": 1, "page_size": 50},
+            headers={"Authorization": "Bearer sk-test"},
+        )
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+    assert response.status_code == 200
+    assert captured["where"] == {"session_id": "session-123", "user": "internal_user_1"}
+    assert '"user" = $2' in captured["sql"]
+    assert captured["params"][0] == "session-123"
+    assert captured["params"][1] == "internal_user_1"
 
 
 @pytest.mark.asyncio

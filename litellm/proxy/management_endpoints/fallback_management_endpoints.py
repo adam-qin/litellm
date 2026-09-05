@@ -38,6 +38,19 @@ from litellm.types.management_endpoints.router_settings_endpoints import (
 router = APIRouter()
 
 
+def _assert_proxy_admin_can_manage_fallbacks(
+    user_api_key_dict: UserAPIKeyAuth,
+) -> None:
+    """Global router fallbacks affect every tenant; only proxy admins may manage them."""
+    from litellm.proxy.common_utils.resource_ownership import is_proxy_admin
+
+    if not is_proxy_admin(user_api_key_dict):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Only proxy admins can manage fallbacks"},
+        )
+
+
 @router.post(
     "/fallback",
     tags=["Fallback Management"],
@@ -77,6 +90,8 @@ async def create_fallback(
     )
 
     try:
+        _assert_proxy_admin_can_manage_fallbacks(user_api_key_dict)
+
         # Validate that we have a router
         if llm_router is None:
             raise HTTPException(
@@ -215,6 +230,8 @@ async def get_fallback(
     from litellm.proxy.proxy_server import llm_router
 
     try:
+        _assert_proxy_admin_can_manage_fallbacks(user_api_key_dict)
+
         if llm_router is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -277,6 +294,8 @@ async def delete_fallback(
     )
 
     try:
+        _assert_proxy_admin_can_manage_fallbacks(user_api_key_dict)
+
         if llm_router is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -35,21 +35,27 @@ const renderWithQueryClient = (ui: React.ReactElement) => {
 };
 
 describe("OrganizationsPanel", () => {
-  it("gates non-premium users behind the enterprise notice", () => {
-    renderWithQueryClient(<OrganizationsPanel userRole="Admin" accessToken={null} premiumUser={false} />);
+  it("shows the create button for an admin without a premium license", () => {
+    renderWithQueryClient(<OrganizationsPanel userRole="Admin" accessToken={null} />);
 
-    expect(screen.getByText(/LiteLLM Enterprise feature/i)).toBeInTheDocument();
-    expect(screen.queryByText("+ Create New Organization")).not.toBeInTheDocument();
+    expect(screen.queryByText(/LiteLLM Enterprise feature/i)).not.toBeInTheDocument();
+    expect(screen.getByText("+ Create New Organization")).toBeInTheDocument();
   });
 
-  it("shows the create button for a premium admin", () => {
-    renderWithQueryClient(<OrganizationsPanel userRole="Admin" accessToken={null} premiumUser={true} />);
+  it("shows the create button for an org admin", () => {
+    renderWithQueryClient(<OrganizationsPanel userRole="Org Admin" accessToken={null} />);
 
     expect(screen.getByText("+ Create New Organization")).toBeInTheDocument();
   });
 
+  it("hides the create button from internal users", () => {
+    renderWithQueryClient(<OrganizationsPanel userRole="Internal User" accessToken={null} />);
+
+    expect(screen.queryByText("+ Create New Organization")).not.toBeInTheDocument();
+  });
+
   it("resolves the loading skeleton to false when the query is disabled (no token)", () => {
-    renderWithQueryClient(<OrganizationsPanel userRole="Admin" accessToken={null} premiumUser={true} />);
+    renderWithQueryClient(<OrganizationsPanel userRole="Admin" accessToken={null} />);
 
     // A disabled React Query keeps isPending true forever; feeding isLoading avoids a stuck skeleton.
     expect(screen.getByTestId("organizations-table")).toHaveTextContent("isLoading:false");

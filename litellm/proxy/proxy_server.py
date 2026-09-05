@@ -12233,6 +12233,27 @@ async def model_info_v2(
             all_models=all_models,
         )
 
+    # Single-ID lookups are an IDOR vector if they skip the list-path filters.
+    # Always drop other teams' BYOK rows. Non-admins also get the accessible-model
+    # filter even when `include_team_models` is omitted; proxy admins keep global view.
+    if modelId is not None:
+        allowed_team_ids = await _get_caller_byok_team_scope(
+            user_api_key_dict=user_api_key_dict,
+            prisma_client=prisma_client,
+        )
+        all_models = [
+            model
+            for model in all_models
+            if not _byok_row_outside_caller_teams(model.get("model_info") or {}, allowed_team_ids)
+        ]
+        if allowed_team_ids is not None and not include_team_models:
+            all_models = await get_all_team_and_direct_access_models(
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,
+                llm_router=llm_router,
+                all_models=all_models,
+            )
+
     # Fill in model info based on config.yaml and litellm model_prices_and_context_window.json
     # This must happen before teamId filtering so that direct_access and access_via_team_ids are populated
     for i, _model in enumerate(all_models):
@@ -12962,6 +12983,17 @@ async def model_info_v1(
             )
         _deployment_info_dict = _get_proxy_model_info(model=deployment_info.model_dump(exclude_none=True))
         single_model_list: List[dict] = [_deployment_info_dict]
+        # Single-ID lookups must not leak other teams' BYOK metadata, and must
+        # not depend on the client passing include_team_models=true.
+        allowed_team_ids = await _get_caller_byok_team_scope(
+            user_api_key_dict=user_api_key_dict,
+            prisma_client=prisma_client,
+        )
+        single_model_list = [
+            model
+            for model in single_model_list
+            if not _byok_row_outside_caller_teams(model.get("model_info") or {}, allowed_team_ids)
+        ]
         if prisma_client is not None:
             single_model_list = await _populate_team_access_on_models(
                 user_api_key_dict=user_api_key_dict,
@@ -12969,7 +13001,7 @@ async def model_info_v1(
                 llm_router=llm_router,
                 all_models=single_model_list,
             )
-            if include_team_models:
+            if allowed_team_ids is not None:
                 single_model_list = _filter_models_to_user_accessible(single_model_list)
             if teamId is not None and teamId.strip():
                 single_model_list = await _filter_models_by_team_id(
