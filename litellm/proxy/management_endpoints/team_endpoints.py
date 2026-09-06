@@ -2071,27 +2071,18 @@ async def handle_update_object_permission(data_json: dict, existing_team_row: Li
     return data_json
 
 
-def _check_team_member_admin_add(
-    member: Union[Member, List[Member]],
-    premium_user: bool,
-):
-    if isinstance(member, Member) and member.role == "admin":
-        if premium_user is not True:
-            raise ValueError(f"Assigning team admins is a premium feature. {CommonProxyErrors.not_premium_user.value}")
-    elif isinstance(member, List):
-        for m in member:
-            if m.role == "admin":
-                if premium_user is not True:
-                    raise ValueError(
-                        f"Assigning team admins is a premium feature. Got={m}. {CommonProxyErrors.not_premium_user.value}. "
-                    )
-
-
 def team_call_validation_checks(
     prisma_client: Optional[PrismaClient],
     data: TeamMemberAddRequest,
-    premium_user: bool,
 ):
+    """Validate /team/member_add inputs.
+
+    XHub keeps Organization / org_admin / team_admin / team_member_permissions
+    available without a LiteLLM Enterprise license. Assigning ``role=admin``
+    is therefore an authorization check (proxy admin, org admin of the team's
+    org, or existing team admin via ``_validate_team_member_add_permissions``),
+    not a premium-user check.
+    """
     if prisma_client is None:
         raise HTTPException(status_code=500, detail={"error": "No db connected"})
 
@@ -2100,14 +2091,6 @@ def team_call_validation_checks(
 
     if data.member is None:
         raise HTTPException(status_code=400, detail={"error": "No member/members passed in"})
-
-    try:
-        _check_team_member_admin_add(
-            member=data.member,
-            premium_user=premium_user,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail={"error": str(e)})
 
 
 def team_member_add_duplication_check(
@@ -2557,7 +2540,6 @@ async def team_member_add(
     """
     from litellm.proxy.proxy_server import (
         litellm_proxy_admin_name,
-        premium_user,
         prisma_client,
         proxy_logging_obj,
         user_api_key_cache,
@@ -2567,7 +2549,6 @@ async def team_member_add(
         team_call_validation_checks(
             prisma_client=prisma_client,
             data=data,
-            premium_user=premium_user,
         )
     except HTTPException as e:
         raise e
@@ -2886,7 +2867,7 @@ async def team_member_update(
 
     Update team member budgets and team member role
     """
-    from litellm.proxy.proxy_server import premium_user, prisma_client
+    from litellm.proxy.proxy_server import prisma_client
 
     if prisma_client is None:
         raise HTTPException(status_code=500, detail={"error": "No db connected"})
@@ -2894,12 +2875,8 @@ async def team_member_update(
     if data.team_id is None:
         raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
 
-    if data.role == "admin" and not premium_user:
-        # exactly the same text your proxy throws for add:
-        raise HTTPException(
-            status_code=400,
-            detail="Assigning team admins is a premium feature. You must be a LiteLLM Enterprise user to use this feature. If you have a license please set `LITELLM_LICENSE` in your env. Get a 7 day trial key here: https://www.litellm.ai/#trial. Pricing: https://www.litellm.ai/#pricing",
-        )
+    # Assigning ``role=admin`` is gated by proxy / org / team admin RBAC below,
+    # not by a LiteLLM Enterprise license.
     if data.user_id is None and data.user_email is None:
         raise HTTPException(
             status_code=400,

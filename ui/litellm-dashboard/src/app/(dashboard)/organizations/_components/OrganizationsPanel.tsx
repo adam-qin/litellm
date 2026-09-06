@@ -78,7 +78,7 @@ const OrganizationsPanel: React.FC<OrganizationsPanelProps> = ({ userRole, acces
 
   return (
     <div className="mx-4 mt-4 flex flex-col gap-4">
-      {(userRole === "Admin" || userRole === "Org Admin") && (
+      {userRole === "Admin" && (
         <Button className="w-fit" onClick={() => setIsOrgModalVisible(true)}>
           + Create New Organization
         </Button>

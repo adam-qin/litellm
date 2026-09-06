@@ -48,6 +48,7 @@ from litellm.proxy.management_endpoints.team_endpoints import (
     delete_team,
     list_available_teams,
     router,
+    team_call_validation_checks,
     team_member_add_duplication_check,
     team_member_delete,
     update_team,
@@ -895,6 +896,24 @@ def test_team_member_add_duplication_check_allows_new_member():
     except ProxyException:
         # If a ProxyException is raised, the test should fail
         pytest.fail("ProxyException should not be raised for a new member")
+
+
+def test_team_call_validation_allows_admin_without_premium():
+    """XHub keeps team_admin assignment available without a LiteLLM license."""
+    data = TeamMemberAddRequest(
+        team_id="test-team-123",
+        member=Member(user_id="new-admin", role="admin"),
+    )
+    team_call_validation_checks(prisma_client=object(), data=data)
+
+    bulk = TeamMemberAddRequest(
+        team_id="test-team-123",
+        member=[
+            Member(user_id="new-admin-1", role="admin"),
+            Member(user_id="new-user-1", role="user"),
+        ],
+    )
+    team_call_validation_checks(prisma_client=object(), data=bulk)
 
 
 @pytest.mark.asyncio

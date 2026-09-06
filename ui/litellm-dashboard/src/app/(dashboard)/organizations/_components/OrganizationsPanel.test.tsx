@@ -42,10 +42,10 @@ describe("OrganizationsPanel", () => {
     expect(screen.getByText("+ Create New Organization")).toBeInTheDocument();
   });
 
-  it("shows the create button for an org admin", () => {
+  it("hides the create button from an org admin", () => {
     renderWithQueryClient(<OrganizationsPanel userRole="Org Admin" accessToken={null} />);
 
-    expect(screen.getByText("+ Create New Organization")).toBeInTheDocument();
+    expect(screen.queryByText("+ Create New Organization")).not.toBeInTheDocument();
   });
 
   it("hides the create button from internal users", () => {

@@ -355,13 +355,7 @@ const TeamInfoView: React.FC<TeamInfoProps> = ({
       // Notify parent component of the update
       onUpdate(updatedTeamData);
     } catch (error: any) {
-      let errMsg = "Failed to add team member";
-
-      if (error?.raw?.detail?.error?.includes("Assigning team admins is a premium feature")) {
-        errMsg = "Assigning admins is an enterprise-only feature. Please upgrade your LiteLLM plan to enable this.";
-      } else if (error?.message) {
-        errMsg = error.message;
-      }
+      const errMsg = error?.message || "Failed to add team member";
 
       NotificationsManager.fromBackend(errMsg);
       console.error("Error adding team member:", error);
@@ -398,12 +392,7 @@ const TeamInfoView: React.FC<TeamInfoProps> = ({
       // Notify parent component of the update
       onUpdate(updatedTeamData);
     } catch (error: any) {
-      let errMsg = "Failed to update team member";
-      if (error?.raw?.detail?.includes("Assigning team admins is a premium feature")) {
-        errMsg = "Assigning admins is an enterprise-only feature. Please upgrade your LiteLLM plan to enable this.";
-      } else if (error?.message) {
-        errMsg = error.message;
-      }
+      const errMsg = error?.message || "Failed to update team member";
       setIsEditMemberModalVisible(false);
 
       MessageManager.destroy(); // Remove all existing toasts
