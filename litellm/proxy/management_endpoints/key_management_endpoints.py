@@ -994,13 +994,9 @@ async def _common_key_generation_helper(
         data_json["created_by"] = user_api_key_dict.user_id
         data_json["updated_by"] = user_api_key_dict.user_id
 
-    # Set tags on the new key
+    # Set tags on the new key. Tags are available on community deployments;
+    # other premium metadata fields remain gated in their respective paths.
     if "tags" in data_json:
-        from litellm.proxy.proxy_server import premium_user
-
-        if premium_user is not True and data_json["tags"] is not None:
-            raise ValueError(f"Only premium users can add tags to keys. {CommonProxyErrors.not_premium_user.value}")
-
         _metadata = data_json.get("metadata")
         if not _metadata:
             data_json["metadata"] = {"tags": data_json["tags"]}
@@ -1952,10 +1948,13 @@ def prepare_metadata_fields(data: BaseModel, non_default_values: dict, existing_
                 else:
                     casted_metadata[k] = v
             if k in LiteLLM_ManagementEndpoint_MetadataFields_Premium:
-                from litellm.proxy.utils import _premium_user_check
+                # Key tags are community-supported; keep all other premium
+                # metadata behind the existing Enterprise license check.
+                if k != "tags":
+                    from litellm.proxy.utils import _premium_user_check
 
-                if v:
-                    _premium_user_check(k)
+                    if v:
+                        _premium_user_check(k)
                 casted_metadata[k] = v
 
     except Exception as e:
@@ -2359,10 +2358,6 @@ async def _validate_update_key_data(
         allowed_routes=data.allowed_routes,
         user_api_key_dict=user_api_key_dict,
         allowed_routes_was_provided="allowed_routes" in data.model_fields_set,
-    )
-    _check_passthrough_routes_caller_permission(
-        data=data,
-        user_api_key_dict=user_api_key_dict,
     )
     _check_permissions_caller_permission(
         data=data,
@@ -3107,10 +3102,6 @@ async def bulk_update_team_keys(
             existing_key_row=auth_anchor,
             user_api_key_cache=user_api_key_cache,
         )
-
-    # Block metadata.allowed_passthrough_routes for non-admins — the runtime
-    # route checker reads it from key/team metadata to grant passthrough.
-    _check_passthrough_routes_caller_permission(data=data.update_fields, user_api_key_dict=user_api_key_dict)
 
     if not requested_tokens:
         raise HTTPException(
@@ -4796,12 +4787,9 @@ async def regenerate_key_fn(
             and _is_master_key(api_key=regenerate_target_key, _master_key=master_key)
         )
 
-        if (
-            premium_user is not True and not is_master_key_regeneration
-        ):  # allow master key regeneration for non-premium users
-            raise ValueError(
-                f"Regenerating Virtual Keys is an Enterprise feature, {CommonProxyErrors.not_premium_user.value}"
-            )
+        # Regeneration is available on community deployments. Resource-level
+        # ownership, team/org scope, master-key validation, and Vault-only
+        # delivery checks below remain mandatory.
 
         # Check if key exists, raise exception if key is not in the DB
         key = data.key if data and data.key else key

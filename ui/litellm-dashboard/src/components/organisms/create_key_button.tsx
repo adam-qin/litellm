@@ -1386,22 +1386,13 @@ const CreateKey: React.FC<CreateKeyProps> = ({ team, teams, data, addKey, autoOp
                     }
                     name="allowed_passthrough_routes"
                     className="mt-4"
-                    help={
-                      premiumUser
-                        ? "Select existing pass through routes or enter new ones"
-                        : "Premium feature - Upgrade to set pass through routes by key"
-                    }
+                    help="Select existing pass through routes or enter new ones"
                   >
                     <PassThroughRoutesSelector
                       onChange={(values: string[]) => form.setFieldValue("allowed_passthrough_routes", values)}
                       value={form.getFieldValue("allowed_passthrough_routes")}
                       accessToken={accessToken}
-                      placeholder={
-                        !premiumUser
-                          ? "Premium feature - Upgrade to set pass through routes by key"
-                          : "Select or enter pass through routes"
-                      }
-                      disabled={!premiumUser}
+                      placeholder="Select or enter pass through routes"
                       teamId={selectedCreateKeyTeam ? selectedCreateKeyTeam.team_id : null}
                     />
                   </Form.Item>

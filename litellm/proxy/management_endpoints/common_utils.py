@@ -82,24 +82,27 @@ def _check_passthrough_routes_caller_permission(
     *,
     entity: str = "key",
 ) -> None:
+    """Reject passthrough writes from callers not authorized by the endpoint.
+
+    Passthrough routes are no longer license-gated, but this legacy helper is
+    intentionally conservative for endpoints that have not yet supplied a
+    target resource. Explicit empty lists are writes and must not bypass the
+    guard through truthiness checks.
     """
-    Only proxy admins may set `allowed_passthrough_routes` (top-level or under
-    `metadata`) — it short-circuits the role-based route gate, so keys and teams
-    must be gated identically.
-    """
-    # view-only admins excluded by design; blocked upstream from writes anyway
     if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
         return
-    if getattr(data, "allowed_passthrough_routes", None):
-        raise HTTPException(
-            status_code=403,
-            detail={"error": f"Only proxy admins can set `allowed_passthrough_routes` on a {entity}."},
-        )
+
+    routes_provided = "allowed_passthrough_routes" in getattr(data, "model_fields_set", set())
+    if not routes_provided and hasattr(data, "allowed_passthrough_routes"):
+        routes_provided = getattr(data, "allowed_passthrough_routes") is not None
+
     metadata = getattr(data, "metadata", None)
-    if isinstance(metadata, dict) and metadata.get("allowed_passthrough_routes"):
+    metadata_routes_provided = isinstance(metadata, dict) and "allowed_passthrough_routes" in metadata
+    if routes_provided or metadata_routes_provided:
+        field_name = "metadata.allowed_passthrough_routes" if metadata_routes_provided else "allowed_passthrough_routes"
         raise HTTPException(
             status_code=403,
-            detail={"error": f"Only proxy admins can set `metadata.allowed_passthrough_routes` on a {entity}."},
+            detail={"error": f"Only proxy admins can set `{field_name}` on a {entity}."},
         )
 
 
