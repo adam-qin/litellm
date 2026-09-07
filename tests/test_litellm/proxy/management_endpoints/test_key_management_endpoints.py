@@ -15376,3 +15376,164 @@ async def test_vault_only_does_not_activate_when_client_missing():
 
     assert response.key_delivery != "vault"
     assert mock_generate_key.await_args.kwargs.get("blocked") is not True
+
+
+def _plaintext_helper_response(user_id="admin-user", team_id=None, key_alias="employee-alice"):
+    return {
+        "key": PLAINTEXT_GENERATED_KEY,
+        "token": PLAINTEXT_GENERATED_KEY,
+        "token_id": HASHED_TOKEN_ID,
+        "expires": None,
+        "user_id": user_id,
+        "team_id": team_id,
+        "key_alias": key_alias,
+        "blocked": False,
+    }
+
+
+def _load_skip_vault_storage():
+    from litellm.proxy.management_endpoints.key_management_endpoints import (
+        _resolve_skip_vault_storage,
+    )
+
+    return _resolve_skip_vault_storage
+
+
+@pytest.mark.asyncio
+async def test_skip_vault_storage_returns_plaintext_without_storing(monkeypatch):
+    """A Proxy Admin may opt out of Vault storage and take the plaintext key."""
+    monkeypatch.setenv("XHUB_ALLOW_SKIP_VAULT_STORAGE", "true")
+    original = _enable_vault_only(client_ready=True)
+    mock_repo = MagicMock()
+    mock_repo.table.find_first = AsyncMock(return_value=None)
+    mock_repo.set_blocked_state = AsyncMock()
+    try:
+        with (
+            patch("litellm.proxy.proxy_server.prisma_client", AsyncMock()),
+            patch("litellm.proxy.proxy_server.llm_router", None),
+            patch("litellm.proxy.proxy_server.premium_user", False),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.generate_key_helper_fn",
+                new_callable=AsyncMock,
+                return_value=_plaintext_helper_response(user_id="admin-user"),
+            ) as mock_generate_key,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.VerificationTokenRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks._store_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+                return_value=VAULT_SECRET_NAME,
+            ) as mock_store,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks.async_key_generated_hook",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = await _common_key_generation_helper(
+                data=GenerateKeyRequest(
+                    key_alias="employee-alice", xhub_skip_vault_storage=True
+                ),
+                user_api_key_dict=_vault_only_admin(),
+                litellm_changed_by=None,
+                team_table=None,
+            )
+    finally:
+        _restore_vault_only(original)
+
+    assert response.key_delivery == "response"
+    assert response.key == PLAINTEXT_GENERATED_KEY
+    assert response.vault_secret_name is None
+    mock_store.assert_not_awaited()
+    # The control flag must never leak into the persisted key row.
+    assert "xhub_skip_vault_storage" not in mock_generate_key.await_args.kwargs
+    assert mock_generate_key.await_args.kwargs.get("blocked") is not True
+
+
+@pytest.mark.asyncio
+async def test_skip_vault_storage_rejected_for_non_admin(monkeypatch):
+    monkeypatch.setenv("XHUB_ALLOW_SKIP_VAULT_STORAGE", "true")
+    resolve = _load_skip_vault_storage()
+    non_admin = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        api_key="sk-alice",
+        user_id="alice",
+    )
+    with pytest.raises(HTTPException) as exc:
+        resolve(
+            data=GenerateKeyRequest(
+                key_alias="employee-alice", xhub_skip_vault_storage=True
+            ),
+            user_api_key_dict=non_admin,
+        )
+    assert int(getattr(exc.value, "status_code", 0)) == 403
+    assert "Proxy Admins" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_skip_vault_storage_rejected_when_deployment_flag_disabled(monkeypatch):
+    monkeypatch.delenv("XHUB_ALLOW_SKIP_VAULT_STORAGE", raising=False)
+    resolve = _load_skip_vault_storage()
+    with pytest.raises(HTTPException) as exc:
+        resolve(
+            data=GenerateKeyRequest(
+                key_alias="employee-alice", xhub_skip_vault_storage=True
+            ),
+            user_api_key_dict=_vault_only_admin(),
+        )
+    assert int(getattr(exc.value, "status_code", 0)) == 400
+    assert "XHUB_ALLOW_SKIP_VAULT_STORAGE" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_skip_vault_storage_ignored_when_flag_absent(monkeypatch):
+    monkeypatch.delenv("XHUB_ALLOW_SKIP_VAULT_STORAGE", raising=False)
+    resolve = _load_skip_vault_storage()
+    admin = _vault_only_admin()
+    assert resolve(data=GenerateKeyRequest(key_alias="app-prod"), user_api_key_dict=admin) is False
+    assert (
+        resolve(
+            data=GenerateKeyRequest(key_alias="app-prod", xhub_skip_vault_storage=False),
+            user_api_key_dict=admin,
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_key_generated_hook_skips_vault_storage_when_flagged():
+    """The post-generation hook must not write a second copy when skipped."""
+    from litellm.proxy._types import GenerateKeyResponse
+    from litellm.proxy.hooks.key_management_event_hooks import KeyManagementEventHooks
+
+    response = GenerateKeyResponse(
+        key=PLAINTEXT_GENERATED_KEY,
+        token_id=HASHED_TOKEN_ID,
+        key_alias="employee-alice",
+        user_id="admin-user",
+    )
+    admin = _vault_only_admin()
+    with patch.object(
+        KeyManagementEventHooks,
+        "_store_virtual_key_in_secret_manager",
+        new_callable=AsyncMock,
+        return_value=VAULT_SECRET_NAME,
+    ) as mock_store:
+        await KeyManagementEventHooks.async_key_generated_hook(
+            data=GenerateKeyRequest(
+                key_alias="employee-alice", xhub_skip_vault_storage=True
+            ),
+            response=response,
+            user_api_key_dict=admin,
+            litellm_changed_by=None,
+        )
+        mock_store.assert_not_awaited()
+
+        await KeyManagementEventHooks.async_key_generated_hook(
+            data=GenerateKeyRequest(key_alias="app-prod"),
+            response=response,
+            user_api_key_dict=admin,
+            litellm_changed_by=None,
+        )
+        mock_store.assert_awaited_once()

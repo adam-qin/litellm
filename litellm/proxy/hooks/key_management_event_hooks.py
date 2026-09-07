@@ -108,7 +108,12 @@ class KeyManagementEventHooks:
         # Store the generated key in the secret manager - non-blocking,
         # independent operation. Vault-only callers already completed this
         # synchronously before the hook and have no plaintext key to persist.
-        if response.key is not None:
+        # Callers that opted out with `xhub_skip_vault_storage` own the
+        # plaintext themselves and must not get a second copy here.
+        if (
+            response.key is not None
+            and getattr(data, "xhub_skip_vault_storage", None) is not True
+        ):
             try:
                 await KeyManagementEventHooks._store_virtual_key_in_secret_manager(
                     secret_name=data.key_alias or f"virtual-key-{response.token_id}",

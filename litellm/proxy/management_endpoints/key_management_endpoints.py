@@ -132,13 +132,66 @@ from litellm.types.utils import (
 )
 
 
-def _is_vault_only_key_delivery(user_api_key_dict: UserAPIKeyAuth) -> bool:
+# XHub: a caller that owns the virtual-key secret lifecycle elsewhere (for
+# example a portal writing a per-user KV path) can ask the proxy to return the
+# plaintext key instead of storing it. This bypasses Vault-only delivery, so it
+# is gated on the caller role AND an explicit deployment opt-in.
+XHUB_SKIP_VAULT_STORAGE_ENV_VAR = "XHUB_ALLOW_SKIP_VAULT_STORAGE"
+
+
+def _xhub_skip_vault_storage_enabled() -> bool:
+    """Return True when this deployment allows callers to skip Vault storage."""
+    return (
+        os.getenv(XHUB_SKIP_VAULT_STORAGE_ENV_VAR, "false").strip().lower()
+        in ("true", "1", "yes", "on")
+    )
+
+
+def _resolve_skip_vault_storage(
+    data: Any,
+    user_api_key_dict: UserAPIKeyAuth,
+    litellm_changed_by: Optional[str] = None,
+) -> bool:
+    """Validate, audit and confirm an explicit request to skip Vault storage."""
+    if getattr(data, "xhub_skip_vault_storage", False) is not True:
+        return False
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "xhub_skip_vault_storage is restricted to Proxy Admins."},
+        )
+    if not _xhub_skip_vault_storage_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": (
+                    "xhub_skip_vault_storage is disabled on this deployment. Set "
+                    f"{XHUB_SKIP_VAULT_STORAGE_ENV_VAR}=true to allow it."
+                )
+            },
+        )
+    verbose_proxy_logger.warning(
+        "XHub virtual-key storage skipped: key_alias=%s user_id=%s changed_by=%s",
+        getattr(data, "key_alias", None),
+        getattr(user_api_key_dict, "user_id", None),
+        litellm_changed_by,
+    )
+    return True
+
+
+def _is_vault_only_key_delivery(
+    user_api_key_dict: UserAPIKeyAuth,
+    *,
+    skip_vault_storage: bool = False,
+) -> bool:
     """Return whether this caller must use opaque, Vault-only key delivery.
 
     This is deliberately restricted to Proxy Admins using the HashiCorp Vault
     backend with virtual-key storage enabled. Other secret-manager backends and
     non-admin callers retain the existing response behavior.
     """
+    if skip_vault_storage:
+        return False
     if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN.value:
         return False
     if litellm._key_management_system != KeyManagementSystem.HASHICORP_VAULT:
@@ -786,7 +839,15 @@ async def _common_key_generation_helper(
         premium_user=premium_user,
     )
 
-    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    skip_vault_storage = _resolve_skip_vault_storage(
+        data=data,
+        user_api_key_dict=user_api_key_dict,
+        litellm_changed_by=litellm_changed_by,
+    )
+
+    vault_only_delivery = _is_vault_only_key_delivery(
+        user_api_key_dict, skip_vault_storage=skip_vault_storage
+    )
     if vault_only_delivery and data.key is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -947,7 +1008,11 @@ async def _common_key_generation_helper(
             )
             delattr(data, field)
 
-    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    # Re-evaluated here (same value as above) so the flag stays in sync with the
+    # caller's skip request after the default key params were merged.
+    vault_only_delivery = _is_vault_only_key_delivery(
+        user_api_key_dict, skip_vault_storage=skip_vault_storage
+    )
     if vault_only_delivery and data.key is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -957,6 +1022,8 @@ async def _common_key_generation_helper(
         )
 
     data_json = data.model_dump(exclude_unset=True, exclude_none=True)  # type: ignore
+    # Control flag for this request only; never persisted on the key row.
+    data_json.pop("xhub_skip_vault_storage", None)
 
     # Fail closed while the newly generated plaintext key is being persisted to
     # Vault. The original blocked value is restored only after Vault succeeds.

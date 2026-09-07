@@ -1,6 +1,6 @@
 # XHub Docker 构建方案
 
-本方案基于 LiteLLM `v1.95.25` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
+本方案基于 LiteLLM `v1.95.26` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
 
 ## 方案选择
 
@@ -20,7 +20,7 @@
 docker build \
   --file Dockerfile \
   --target runtime \
-  --tag xhub/litellm:1.95.25 \
+  --tag xhub/litellm:1.95.26 \
   .
 ```
 
@@ -31,7 +31,7 @@ docker build \
   --file docker/Dockerfile.non_root \
   --target runtime \
   --build-arg PROXY_EXTRAS_SOURCE=local \
-  --tag xhub/litellm:1.95.25-nonroot \
+  --tag xhub/litellm:1.95.26-nonroot \
   .
 ```
 
@@ -100,6 +100,24 @@ XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS=true
 
 如果已购买 Enterprise 授权，直接设置 `LITELLM_LICENSE` 即可，不需要该开关。
 
+### 允许门户跳过 XHub 虚拟密钥存储
+
+员工 Key 由门户自己写 `{VAULT_KEY_PREFIX}/{ldap_user}`。如果 XHub 同时开启了 Vault-only 交付（`store_virtual_keys=true`），`/key/generate` 会对 Proxy Admin 返回 `key=null`，门户就拿不到明文去覆盖自己的记录。
+
+需要门户自行覆盖时，在 XHub 显式开启：
+
+```dotenv
+XHUB_ALLOW_SKIP_VAULT_STORAGE=true
+```
+
+然后由 Proxy Admin 在 `/key/generate` 请求体里传 `xhub_skip_vault_storage: true`。效果：
+
+- 跳过 Vault-only 交付，响应直接返回明文 `key`；
+- `async_key_generated_hook` 不再把该 Key 写入 `{prefix_for_stored_virtual_keys}/{key_alias}`；
+- 非 Proxy Admin 传该字段返回 403；实例未开启该开关时返回 400。
+
+开关默认关闭。走这条路径的员工 Key **不要** 开 `auto_rotate`，否则 XHub 自动轮换仍会按别名写入 `application/{alias}`，与门户路径分叉。
+
 改动后重启服务：
 
 ```bash
@@ -134,8 +152,8 @@ docker compose \
 ## E2E 使用本地 XHub 镜像
 
 ```bash
-docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.25 .
-LITELLM_E2E_IMAGE=xhub/litellm:1.95.25 \
+docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.26 .
+LITELLM_E2E_IMAGE=xhub/litellm:1.95.26 \
   docker compose -f tests/e2e/docker-compose.yml up -d
 ```
 
@@ -144,8 +162,8 @@ LITELLM_E2E_IMAGE=xhub/litellm:1.95.25 \
 正式发布时不要只使用 `latest`。建议使用：
 
 ```text
-xhub/litellm:1.95.25-<git-commit>
-xhub/litellm:1.95.25-nonroot-<git-commit>
+xhub/litellm:1.95.26-<git-commit>
+xhub/litellm:1.95.26-nonroot-<git-commit>
 ```
 
 并额外记录镜像 digest、Dockerfile、构建参数、`uv.lock` 和 `package-lock.json` 哈希，以及 UI 测试、镜像扫描和容器健康检查结果。
