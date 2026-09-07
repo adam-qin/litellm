@@ -551,6 +551,23 @@ async def _add_team_model_to_db(
     return model_response
 
 
+def _explicit_patch_team_id(patch_data: updateDeployment) -> Tuple[bool, Optional[str]]:
+    """Distinguish PATCH omit from an explicit team_id clear.
+
+    Returns:
+        (team_id_was_in_patch, normalized_team_id)
+
+    ``team_id`` omitted from the patch must not change the current association.
+    An explicit ``null`` or blank string is an unassign request.
+    """
+    if patch_data.model_info is None or "team_id" not in patch_data.model_info.model_fields_set:
+        return False, None
+    team_id = patch_data.model_info.team_id
+    if isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    return True, team_id
+
+
 async def _update_team_model_in_db(
     db_model: Deployment,
     patch_data: updateDeployment,
@@ -564,6 +581,11 @@ async def _update_team_model_in_db(
     - Creates unique internal model_name and team alias
     - Adds model to team object
     - Preserves team_public_model_name for external reference
+
+    If patch_data explicitly sets team_id to null/empty:
+    - Removes the public name from the previous team's models list (unless a sibling still backs it)
+    - Restores the deployment's public model_name
+    - Clears model_info.team_id and team_public_model_name
     """
     # Validate team_id if present in patch_data
     from litellm.proxy.proxy_server import premium_user
@@ -575,11 +597,20 @@ async def _update_team_model_in_db(
         premium_user=premium_user,
     )
 
-    patch_team_id = patch_data.model_info.team_id if patch_data.model_info else None
+    team_id_in_patch, patch_team_id = _explicit_patch_team_id(patch_data)
 
-    # No team_id in patch, proceed with standard update
-    if patch_team_id is None:
+    # PATCH omit: leave the current team association unchanged
+    if not team_id_in_patch:
         return update_db_model(db_model=db_model, updated_patch=patch_data)
+
+    # Explicit null/blank: unassign this deployment from its team
+    if patch_team_id is None:
+        return await _clear_team_model_assignment(
+            db_model=db_model,
+            patch_data=patch_data,
+            user_api_key_dict=user_api_key_dict,
+            prisma_client=prisma_client,
+        )
 
     # Determine public model name
     public_model_name = _get_public_model_name(
@@ -599,6 +630,24 @@ async def _update_team_model_in_db(
     is_new_team_assignment = db_team_id != patch_team_id
 
     if is_new_team_assignment:
+        if db_team_id:
+            await ModelManagementAuthChecks.can_user_make_model_call(
+                model_params=db_model,
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,
+                premium_user=premium_user,
+                allow_missing_team=True,
+            )
+            old_public_name = (
+                db_model.model_info.team_public_model_name if db_model.model_info else None
+            ) or public_model_name
+            await _drop_team_acl_if_unbacked(
+                team_id=db_team_id,
+                db_model=db_model,
+                public_name=old_public_name,
+                prisma_client=prisma_client,
+                user_api_key_dict=user_api_key_dict,
+            )
         await _setup_new_team_model_assignment(
             team_id=patch_team_id,
             public_model_name=public_model_name,
@@ -616,6 +665,106 @@ async def _update_team_model_in_db(
         )
 
     return update_db_model(db_model=db_model, updated_patch=patch_data)
+
+
+async def _drop_team_acl_if_unbacked(
+    team_id: str,
+    db_model: Deployment,
+    public_name: Optional[str],
+    prisma_client: PrismaClient,
+    user_api_key_dict: UserAPIKeyAuth,
+) -> None:
+    """Remove ``public_name`` from team.models only if no sibling still backs it."""
+    if not public_name:
+        return
+    team_deployments = await _get_team_deployments(team_id, prisma_client)
+    sibling_still_backs_name = any(
+        d.model_name != db_model.model_name and _team_public_name_from_row(d.model_info) == public_name
+        for d in team_deployments
+    )
+    existing_team_row = await prisma_client.db.litellm_teamtable.find_unique(where={"team_id": team_id})
+    if existing_team_row is None or sibling_still_backs_name:
+        return
+    await team_model_delete(
+        data=TeamModelDeleteRequest(
+            team_id=team_id,
+            models=[public_name],
+        ),
+        http_request=Request(scope={"type": "http"}),
+        user_api_key_dict=user_api_key_dict,
+    )
+
+
+def _team_public_name_from_row(model_info: Optional[Union[dict, str]]) -> Optional[str]:
+    if isinstance(model_info, dict):
+        value = model_info.get("team_public_model_name")
+        return value if isinstance(value, str) else None
+    if isinstance(model_info, str):
+        try:
+            parsed = json.loads(model_info)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, dict):
+            value = parsed.get("team_public_model_name")
+            return value if isinstance(value, str) else None
+    return None
+
+
+async def _clear_team_model_assignment(
+    db_model: Deployment,
+    patch_data: updateDeployment,
+    user_api_key_dict: UserAPIKeyAuth,
+    prisma_client: PrismaClient,
+) -> PrismaCompatibleUpdateDBModel:
+    """Unassign a deployment from its team without deleting the deployment.
+
+    Auth uses the *existing* team on ``db_model``: proxy admin or that team's
+    admin. ``update_db_model`` cannot null privileged fields like team_id, so
+    this path pops them from the merged blob after the standard merge.
+    """
+    from litellm.proxy.proxy_server import premium_user
+
+    db_team_id = db_model.model_info.team_id if db_model.model_info else None
+    if not db_team_id:
+        return update_db_model(db_model=db_model, updated_patch=patch_data)
+
+    await ModelManagementAuthChecks.can_user_make_model_call(
+        model_params=db_model,
+        user_api_key_dict=user_api_key_dict,
+        prisma_client=prisma_client,
+        premium_user=premium_user,
+        allow_missing_team=True,
+    )
+
+    old_public_name = db_model.model_info.team_public_model_name if db_model.model_info else None
+    incoming = patch_data.model_name
+    if incoming and not incoming.startswith(f"model_name_{db_team_id}_"):
+        restored_model_name = incoming
+    elif old_public_name:
+        restored_model_name = old_public_name
+    else:
+        restored_model_name = db_model.model_name
+
+    public_name_to_drop = old_public_name or (
+        restored_model_name if not restored_model_name.startswith(f"model_name_{db_team_id}_") else None
+    )
+    await _drop_team_acl_if_unbacked(
+        team_id=db_team_id,
+        db_model=db_model,
+        public_name=public_name_to_drop,
+        prisma_client=prisma_client,
+        user_api_key_dict=user_api_key_dict,
+    )
+
+    patch_data.model_name = restored_model_name
+    result = update_db_model(db_model=db_model, updated_patch=patch_data)
+    info_raw = result.get("model_info")
+    if info_raw:
+        info = json.loads(info_raw) if isinstance(info_raw, str) else dict(info_raw)
+        info.pop("team_id", None)
+        info.pop("team_public_model_name", None)
+        result["model_info"] = json.dumps(info)
+    return result
 
 
 def _get_public_model_name(

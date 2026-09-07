@@ -1757,6 +1757,283 @@ class TestTeamModelUpdate:
         # column is left alone)
         assert result.get("model_name") == "model_name_test-team_abc123"
 
+    def test_explicit_patch_team_id_distinguishes_omit_from_null(self):
+        """PATCH omit vs explicit null must not collapse: omitted team_id is
+        'leave unchanged', explicit null is 'unassign'."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _explicit_patch_team_id,
+        )
+        from litellm.types.router import ModelInfo
+
+        omitted = updateDeployment(model_info=ModelInfo(id="dep-1"))
+        assert _explicit_patch_team_id(omitted) == (False, None)
+
+        no_model_info = updateDeployment()
+        assert _explicit_patch_team_id(no_model_info) == (False, None)
+
+        cleared = updateDeployment(model_info=ModelInfo(team_id=None))
+        assert _explicit_patch_team_id(cleared) == (True, None)
+
+        blank = updateDeployment(model_info=ModelInfo(team_id="  "))
+        assert _explicit_patch_team_id(blank) == (True, None)
+
+        assigned = updateDeployment(model_info=ModelInfo(team_id="team_123"))
+        assert _explicit_patch_team_id(assigned) == (True, "team_123")
+
+    @pytest.mark.asyncio
+    async def test_patch_model_clear_team_id_removes_association(self):
+        """Dashboard unassign: explicit team_id=null must restore the public
+        model_name, drop team_id/team_public_model_name, and remove the public
+        name from the team's models list."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _update_team_model_in_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        db_model = Deployment(
+            model_name="model_name_team_123_uuid1",
+            litellm_params=LiteLLM_Params(model="azure/gpt-4"),
+            model_info=ModelInfo(
+                id="dep-1",
+                team_id="team_123",
+                team_public_model_name="tenant-azure-gpt4",
+            ),
+        )
+        # Dashboard echo of the internal name plus an explicit null team_id
+        patch_data = updateDeployment(
+            model_name="model_name_team_123_uuid1",
+            model_info=ModelInfo(id="dep-1", team_id=None),
+        )
+        user_api_key_dict = UserAPIKeyAuth(
+            user_id="test_user",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+        prisma_client = MockPrismaClient(team_exists=True)
+
+        with (
+            patch(
+                "litellm.proxy.proxy_server.premium_user",
+                True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_delete"
+            ) as mock_team_model_delete,
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_add"
+            ) as mock_team_model_add,
+        ):
+            result = await _update_team_model_in_db(
+                db_model=db_model,
+                patch_data=patch_data,
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,  # type: ignore
+            )
+
+        mock_team_model_delete.assert_called_once()
+        delete_kwargs = mock_team_model_delete.call_args.kwargs
+        assert delete_kwargs["data"].team_id == "team_123"
+        assert delete_kwargs["data"].models == ["tenant-azure-gpt4"]
+        mock_team_model_add.assert_not_called()
+
+        assert result.get("model_name") == "tenant-azure-gpt4"
+        parsed_info = json.loads(result["model_info"])
+        assert "team_id" not in parsed_info
+        assert "team_public_model_name" not in parsed_info
+
+    @pytest.mark.asyncio
+    async def test_patch_model_clear_team_id_keeps_acl_when_siblings_exist(self):
+        """Unassigning one replica of a load-balanced public name must not
+        revoke team access while a sibling still serves it."""
+        from unittest.mock import MagicMock
+
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _update_team_model_in_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        db_model = Deployment(
+            model_name="model_name_team_123_uuid1",
+            litellm_params=LiteLLM_Params(model="azure/gpt-4"),
+            model_info=ModelInfo(
+                team_id="team_123",
+                team_public_model_name="tenant-azure-gpt4",
+            ),
+        )
+        sibling = MagicMock()
+        sibling.model_name = "model_name_team_123_uuid2"
+        sibling.model_info = {
+            "team_id": "team_123",
+            "team_public_model_name": "tenant-azure-gpt4",
+        }
+        prisma_client = MockPrismaClient(
+            team_exists=True, sibling_deployments=[sibling]
+        )
+        patch_data = updateDeployment(model_info=ModelInfo(team_id=None))
+        user_api_key_dict = UserAPIKeyAuth(
+            user_id="test_user",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+
+        with (
+            patch(
+                "litellm.proxy.proxy_server.premium_user",
+                True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_delete"
+            ) as mock_team_model_delete,
+        ):
+            result = await _update_team_model_in_db(
+                db_model=db_model,
+                patch_data=patch_data,
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,  # type: ignore
+            )
+
+        mock_team_model_delete.assert_not_called()
+        parsed_info = json.loads(result["model_info"])
+        assert "team_id" not in parsed_info
+        assert result.get("model_name") == "tenant-azure-gpt4"
+
+    @pytest.mark.asyncio
+    async def test_patch_model_omitted_team_id_does_not_clear(self):
+        """PATCH semantics: omitting team_id must leave the association intact."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _update_team_model_in_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        db_model = Deployment(
+            model_name="model_name_team_123_uuid1",
+            litellm_params=LiteLLM_Params(model="azure/gpt-4"),
+            model_info=ModelInfo(
+                team_id="team_123",
+                team_public_model_name="tenant-azure-gpt4",
+            ),
+        )
+        patch_data = updateDeployment(model_info=ModelInfo(id="dep-1"))
+        user_api_key_dict = UserAPIKeyAuth(
+            user_id="test_user",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+        prisma_client = MockPrismaClient(team_exists=True)
+
+        with (
+            patch(
+                "litellm.proxy.proxy_server.premium_user",
+                True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_delete"
+            ) as mock_team_model_delete,
+        ):
+            result = await _update_team_model_in_db(
+                db_model=db_model,
+                patch_data=patch_data,
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,  # type: ignore
+            )
+
+        mock_team_model_delete.assert_not_called()
+        parsed_info = json.loads(result["model_info"])
+        assert parsed_info.get("team_id") == "team_123"
+        assert parsed_info.get("team_public_model_name") == "tenant-azure-gpt4"
+        assert result.get("model_name") == "model_name_team_123_uuid1"
+
+    @pytest.mark.asyncio
+    async def test_patch_model_clear_team_id_rejects_non_admin(self):
+        """Unassigning a team-scoped model still requires proxy admin or that
+        team's admin. A random internal user must not ungate it."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _update_team_model_in_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        db_model = Deployment(
+            model_name="model_name_team_123_uuid1",
+            litellm_params=LiteLLM_Params(model="azure/gpt-4"),
+            model_info=ModelInfo(
+                team_id="team_123",
+                team_public_model_name="tenant-azure-gpt4",
+            ),
+        )
+        patch_data = updateDeployment(model_info=ModelInfo(team_id=None))
+        user_api_key_dict = UserAPIKeyAuth(
+            user_id="test_user",
+            user_role=LitellmUserRoles.INTERNAL_USER,
+        )
+        prisma_client = MockPrismaClient(team_exists=True, user_admin=False)
+
+        with patch(
+            "litellm.proxy.proxy_server.premium_user",
+            True,
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await _update_team_model_in_db(
+                    db_model=db_model,
+                    patch_data=patch_data,
+                    user_api_key_dict=user_api_key_dict,
+                    prisma_client=prisma_client,  # type: ignore
+                )
+            assert "403" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_patch_model_switch_team_drops_old_acl(self):
+        """Rebinding a deployment to a different team must drop the old team's
+        models-list entry unless a sibling still backs that public name."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _update_team_model_in_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        db_model = Deployment(
+            model_name="model_name_team_old_uuid1",
+            litellm_params=LiteLLM_Params(model="azure/gpt-4"),
+            model_info=ModelInfo(
+                team_id="team_old",
+                team_public_model_name="tenant-azure-gpt4",
+            ),
+        )
+        patch_data = updateDeployment(
+            model_name="tenant-azure-gpt4",
+            model_info=ModelInfo(team_id="team_new"),
+        )
+        user_api_key_dict = UserAPIKeyAuth(
+            user_id="test_user",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+        prisma_client = MockPrismaClient(team_exists=True)
+
+        with (
+            patch(
+                "litellm.proxy.proxy_server.premium_user",
+                True,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_delete"
+            ) as mock_team_model_delete,
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_add"
+            ) as mock_team_model_add,
+        ):
+            result = await _update_team_model_in_db(
+                db_model=db_model,
+                patch_data=patch_data,
+                user_api_key_dict=user_api_key_dict,
+                prisma_client=prisma_client,  # type: ignore
+            )
+
+        mock_team_model_delete.assert_called_once()
+        delete_kwargs = mock_team_model_delete.call_args.kwargs
+        assert delete_kwargs["data"].team_id == "team_old"
+        assert delete_kwargs["data"].models == ["tenant-azure-gpt4"]
+        mock_team_model_add.assert_called_once()
+        add_kwargs = mock_team_model_add.call_args.kwargs
+        assert add_kwargs["data"].team_id == "team_new"
+        parsed_info = json.loads(result["model_info"])
+        assert parsed_info.get("team_id") == "team_new"
+        assert result.get("model_name", "").startswith("model_name_team_new_")
+
 
 class TestModelInfoEndpoint:
     """Test the model_info endpoint for retrieving individual model information"""

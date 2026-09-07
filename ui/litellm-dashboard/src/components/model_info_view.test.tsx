@@ -526,6 +526,47 @@ describe("ModelInfoView", () => {
     });
   });
 
+  it("sends team_id null when the user clears the team association", async () => {
+    // Regression: clearing TeamDropdown used to set team_id: undefined, which
+    // JSON.stringify dropped. The backend then treated the PATCH as "leave the
+    // current team association unchanged".
+    const teamBoundModel = {
+      ...defaultModelData,
+      model_info: {
+        ...defaultModelData.model_info,
+        team_id: "team-1",
+        team_public_model_name: "GPT-4",
+      },
+    };
+    mockUseModelsInfo.mockReturnValue({
+      data: { data: [teamBoundModel] },
+      isLoading: false,
+      error: null,
+    });
+
+    const user = userEvent.setup();
+    render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /edit settings/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /edit settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("team-dropdown")).toBeInTheDocument();
+    });
+    await user.selectOptions(screen.getByTestId("team-dropdown"), "");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockModelPatchUpdateCall).toHaveBeenCalled();
+    });
+
+    const updatePayload = mockModelPatchUpdateCall.mock.calls[0][1];
+    expect(updatePayload.model_info.team_id).toBeNull();
+    expect(JSON.parse(JSON.stringify(updatePayload)).model_info).toHaveProperty("team_id", null);
+  });
+
   it("should display tags section", async () => {
     render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} />, { wrapper });
     await waitFor(() => {

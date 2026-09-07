@@ -416,7 +416,9 @@ export default function ModelInfoView({
             access_groups: values.model_access_group,
           };
         }
-        // Associate this deployment with a team (same public model, different vendor)
+        // Associate this deployment with a team (same public model, different vendor).
+        // Explicit null is required: JSON.stringify drops `undefined`, and the backend
+        // treats an omitted team_id as "leave the current association unchanged".
         if (values.team_id) {
           updatedModelInfo = {
             ...updatedModelInfo,
@@ -425,7 +427,7 @@ export default function ModelInfoView({
         } else if (form.isFieldTouched("team_id")) {
           updatedModelInfo = {
             ...updatedModelInfo,
-            team_id: undefined,
+            team_id: null,
           };
         }
         // Override health_check_model from the form
