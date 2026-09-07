@@ -8371,11 +8371,17 @@ class ProxyStartupEvent:
                     verbose_proxy_logger.debug(
                         f"Key rotation background job scheduled every {LITELLM_KEY_ROTATION_CHECK_INTERVAL_SECONDS} seconds (LITELLM_KEY_ROTATION_ENABLED=true)"
                     )
+                    from litellm.constants import KEY_ROTATION_JOB_NAME
+
+                    # Run a first check shortly after startup; otherwise an
+                    # interval job waits a full configured interval (24h by
+                    # default) before the first rotation cycle.
                     scheduler.add_job(
                         key_rotation_manager.process_rotations,
                         "interval",
                         seconds=LITELLM_KEY_ROTATION_CHECK_INTERVAL_SECONDS,
-                        id="key_rotation_job",
+                        id=KEY_ROTATION_JOB_NAME,
+                        next_run_time=datetime.now() + timedelta(seconds=10),
                     )
                 else:
                     verbose_proxy_logger.warning("Key rotation enabled but prisma_client not available")

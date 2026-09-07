@@ -483,9 +483,11 @@ export default function KeyInfoView({
         isBlocked={isBlocked}
         canModifyKey={canModifyKey}
         backButtonText={backButtonText}
-        regenerateDisabled={!premiumUser}
+        // Regeneration is community-enabled; the backend still enforces
+        // ownership, organization/team scope, and team-member permissions.
+        regenerateDisabled={!canModifyKey}
         regenerateTooltip={
-          !premiumUser ? "This is a LiteLLM Enterprise feature, and requires a valid key to use." : undefined
+          !canModifyKey ? "You are not authorized to regenerate this key." : undefined
         }
       />
 

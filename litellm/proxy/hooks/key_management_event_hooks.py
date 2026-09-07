@@ -172,6 +172,7 @@ class KeyManagementEventHooks:
         response: GenerateKeyResponse,
         user_api_key_dict: UserAPIKeyAuth,
         litellm_changed_by: Optional[str] = None,
+        secret_manager_already_rotated: bool = False,
     ):
         from litellm.proxy.management_helpers.audit_logs import (
             create_audit_log_for_update,
@@ -179,27 +180,25 @@ class KeyManagementEventHooks:
         )
         from litellm.proxy.proxy_server import litellm_proxy_admin_name
 
-        # Store the generated key in the secret manager - non-blocking, independent operation.
-        # Vault-only rotation is completed synchronously by the endpoint and the
-        # redacted response prevents a second write here.
-        if data is not None and response.token_id is not None and response.key is not None:
+        # Secret-manager rotation is completed synchronously by the regenerate
+        # endpoint when requested. Keep the legacy hook path for callers that
+        # invoke this hook directly, while avoiding a second write for the
+        # endpoint's already-committed rotation.
+        if (
+            not secret_manager_already_rotated
+            and data is not None
+            and response.token_id is not None
+            and response.key is not None
+        ):
             try:
                 initial_secret_name = existing_key_row.key_alias or f"virtual-key-{existing_key_row.token}"
                 new_secret_name = response.key_alias or data.key_alias or initial_secret_name
-                verbose_proxy_logger.info(
-                    "Updating secret in secret manager: secret_name=%s",
-                    new_secret_name,
-                )
                 team_id = getattr(existing_key_row, "team_id", None)
                 await KeyManagementEventHooks._rotate_virtual_key_in_secret_manager(
                     current_secret_name=initial_secret_name,
                     new_secret_name=new_secret_name,
                     new_secret_value=response.key,
                     team_id=team_id,
-                )
-                verbose_proxy_logger.info(
-                    "Secret updated in secret manager: secret_name=%s",
-                    new_secret_name,
                 )
             except Exception as e:
                 verbose_proxy_logger.warning(f"Failed to rotate virtual key in secret manager: {e}")

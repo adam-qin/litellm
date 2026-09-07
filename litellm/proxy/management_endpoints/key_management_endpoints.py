@@ -4602,10 +4602,11 @@ async def _execute_virtual_key_regeneration(
     update_data = prisma_client.jsonify_object(data=update_data)
 
     vault_secret_name: Optional[str] = None
-    if vault_only_delivery:
-        # Rotate Vault before changing the DB token. If Vault is unavailable,
-        # the old DB key remains the only active credential and the endpoint
-        # returns 503 without publishing an unusable new key.
+    # When virtual-key storage is enabled, rotate the secret synchronously for
+    # every regenerate (manual and scheduled), not only Vault-only delivery.
+    # This prevents the DB from publishing a new token while Vault still holds
+    # the old value. The helper is a no-op when virtual-key storage is disabled.
+    if litellm._key_management_settings is not None and litellm._key_management_settings.store_virtual_keys is True:
         vault_secret_name = await KeyManagementEventHooks._rotate_virtual_key_in_secret_manager(
             current_secret_name=key_in_db.key_alias or f"virtual-key-{hashed_api_key}",
             new_secret_name=(
@@ -4660,6 +4661,7 @@ async def _execute_virtual_key_regeneration(
             response=response,
             user_api_key_dict=user_api_key_dict,
             litellm_changed_by=litellm_changed_by,
+            secret_manager_already_rotated=(vault_secret_name is not None),
         )
     )
     return response
@@ -4734,7 +4736,9 @@ async def regenerate_key_fn(
     }'
     ```
 
-    Note: This is an Enterprise feature. It requires a premium license to use.
+    Regeneration is available on community deployments. Resource-level
+    ownership, organization/team scope, master-key validation, and Vault-only
+    delivery checks are still enforced.
     """
     try:
         from litellm.proxy.proxy_server import (

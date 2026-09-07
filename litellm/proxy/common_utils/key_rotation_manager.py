@@ -126,7 +126,13 @@ class KeyRotationManager:
             }
         )
 
-        return keys_with_rotation
+        # Keep the database predicate broad for compatibility with older rows,
+        # but apply the same semantic guard used by the rotation decision logic.
+        # In particular, auto_rotate=True without rotation_interval is invalid
+        # configuration and must not cause an immediate rotation attempt.
+        return [
+            key for key in keys_with_rotation if self._should_rotate_key(key, now)
+        ]
 
     async def _cleanup_expired_deprecated_keys(self) -> None:
         """
@@ -201,4 +207,5 @@ class KeyRotationManager:
                 response=response,
                 user_api_key_dict=system_user,
                 litellm_changed_by=LITELLM_INTERNAL_JOBS_SERVICE_ACCOUNT_NAME,
+                secret_manager_already_rotated=True,
             )
