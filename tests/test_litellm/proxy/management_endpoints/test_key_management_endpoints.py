@@ -15537,3 +15537,121 @@ async def test_key_generated_hook_skips_vault_storage_when_flagged():
             litellm_changed_by=None,
         )
         mock_store.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_key_rotated_hook_skips_vault_storage_when_flagged():
+    """The post-rotation hook must not write a second copy when skipped."""
+    from litellm.proxy._types import GenerateKeyResponse
+    from litellm.proxy.hooks.key_management_event_hooks import KeyManagementEventHooks
+
+    response = GenerateKeyResponse(
+        key=PLAINTEXT_GENERATED_KEY,
+        token_id=HASHED_TOKEN_ID,
+        key_alias="employee-alice",
+        user_id="admin-user",
+    )
+    existing = _make_regenerate_existing_key()
+    admin = _vault_only_admin()
+    with patch.object(
+        KeyManagementEventHooks,
+        "_rotate_virtual_key_in_secret_manager",
+        new_callable=AsyncMock,
+        return_value=VAULT_SECRET_NAME,
+    ) as mock_rotate:
+        await KeyManagementEventHooks.async_key_rotated_hook(
+            data=RegenerateKeyRequest(
+                key_alias="employee-alice", xhub_skip_vault_storage=True
+            ),
+            existing_key_row=existing,
+            response=response,
+            user_api_key_dict=admin,
+            litellm_changed_by=None,
+        )
+        mock_rotate.assert_not_awaited()
+
+        await KeyManagementEventHooks.async_key_rotated_hook(
+            data=RegenerateKeyRequest(key_alias="app-prod"),
+            existing_key_row=existing,
+            response=response,
+            user_api_key_dict=admin,
+            litellm_changed_by=None,
+        )
+        mock_rotate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_key_regeneration_skip_vault_returns_plaintext(
+    monkeypatch,
+):
+    """A Proxy Admin may opt out of Vault rotation and take the plaintext key."""
+    from litellm.proxy.management_endpoints.key_management_endpoints import (
+        _execute_virtual_key_regeneration,
+    )
+
+    monkeypatch.setenv("XHUB_ALLOW_SKIP_VAULT_STORAGE", "true")
+    original = _enable_vault_only(client_ready=True)
+    existing_key = _make_regenerate_existing_key()
+    data = RegenerateKeyRequest(xhub_skip_vault_storage=True)
+    user_api_key_dict = _make_regenerate_user_api_key_dict()
+    mock_prisma_client = _make_regenerate_mock_prisma()
+    try:
+        with (
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.get_new_token",
+                new_callable=AsyncMock,
+                return_value=PLAINTEXT_GENERATED_KEY,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._insert_deprecated_key",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints._delete_cache_key_object",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks._rotate_virtual_key_in_secret_manager",
+                new_callable=AsyncMock,
+                return_value=VAULT_SECRET_NAME,
+            ) as mock_rotate,
+            patch(
+                "litellm.proxy.management_endpoints.key_management_endpoints.KeyManagementEventHooks.async_key_rotated_hook",
+                new_callable=AsyncMock,
+            ),
+        ):
+            response = await _execute_virtual_key_regeneration(
+                prisma_client=mock_prisma_client,
+                key_in_db=existing_key,
+                hashed_api_key="abc123",
+                key="abc123",
+                data=data,
+                user_api_key_dict=user_api_key_dict,
+                litellm_changed_by=None,
+                user_api_key_cache=MagicMock(),
+                proxy_logging_obj=MagicMock(),
+            )
+    finally:
+        _restore_vault_only(original)
+
+    assert response.key == PLAINTEXT_GENERATED_KEY
+    assert response.key_delivery == "response"
+    assert response.vault_secret_name is None
+    mock_rotate.assert_not_awaited()
+    update_data = mock_prisma_client.db.litellm_verificationtoken.update.await_args.kwargs[
+        "data"
+    ]
+    assert "xhub_skip_vault_storage" not in update_data
+
+
+@pytest.mark.asyncio
+async def test_prepare_key_update_data_drops_skip_vault_flag():
+    """xhub_skip_vault_storage is request-only and must never reach the DB row."""
+    from litellm.proxy.management_endpoints.key_management_endpoints import (
+        prepare_key_update_data,
+    )
+
+    existing = _make_regenerate_existing_key()
+    data = RegenerateKeyRequest(xhub_skip_vault_storage=True)
+    result = await prepare_key_update_data(data=data, existing_key_row=existing)
+    assert "xhub_skip_vault_storage" not in result

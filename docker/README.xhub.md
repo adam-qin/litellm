@@ -1,6 +1,6 @@
 # XHub Docker 构建方案
 
-本方案基于 LiteLLM `v1.95.26` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
+本方案基于 LiteLLM `v1.95.27` 的源码工作树构建 XHub 单体 Proxy 镜像。镜像在构建阶段重新编译 dashboard，因此不会复用工作区中可能存在的旧静态 UI bundle。
 
 ## 方案选择
 
@@ -20,7 +20,7 @@
 docker build \
   --file Dockerfile \
   --target runtime \
-  --tag xhub/litellm:1.95.26 \
+  --tag xhub/litellm:1.95.27 \
   .
 ```
 
@@ -31,7 +31,7 @@ docker build \
   --file docker/Dockerfile.non_root \
   --target runtime \
   --build-arg PROXY_EXTRAS_SOURCE=local \
-  --tag xhub/litellm:1.95.26-nonroot \
+  --tag xhub/litellm:1.95.27-nonroot \
   .
 ```
 
@@ -110,10 +110,11 @@ XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS=true
 XHUB_ALLOW_SKIP_VAULT_STORAGE=true
 ```
 
-然后由 Proxy Admin 在 `/key/generate` 请求体里传 `xhub_skip_vault_storage: true`。效果：
+然后由 Proxy Admin 在 `/key/generate` 或 `/key/regenerate` 请求体里传 `xhub_skip_vault_storage: true`。效果：
 
 - 跳过 Vault-only 交付，响应直接返回明文 `key`；
-- `async_key_generated_hook` 不再把该 Key 写入 `{prefix_for_stored_virtual_keys}/{key_alias}`；
+- `/key/generate` 的 `async_key_generated_hook` 不再把该 Key 写入 `{prefix_for_stored_virtual_keys}/{key_alias}`；
+- `/key/regenerate` 不再同步轮换 XHub Vault 里的虚拟密钥，`async_key_rotated_hook` 也不会补写第二份；
 - 非 Proxy Admin 传该字段返回 403；实例未开启该开关时返回 400。
 
 开关默认关闭。走这条路径的员工 Key **不要** 开 `auto_rotate`，否则 XHub 自动轮换仍会按别名写入 `application/{alias}`，与门户路径分叉。
@@ -152,8 +153,8 @@ docker compose \
 ## E2E 使用本地 XHub 镜像
 
 ```bash
-docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.26 .
-LITELLM_E2E_IMAGE=xhub/litellm:1.95.26 \
+docker build --file Dockerfile --target runtime --tag xhub/litellm:1.95.27 .
+LITELLM_E2E_IMAGE=xhub/litellm:1.95.27 \
   docker compose -f tests/e2e/docker-compose.yml up -d
 ```
 
@@ -162,8 +163,8 @@ LITELLM_E2E_IMAGE=xhub/litellm:1.95.26 \
 正式发布时不要只使用 `latest`。建议使用：
 
 ```text
-xhub/litellm:1.95.26-<git-commit>
-xhub/litellm:1.95.26-nonroot-<git-commit>
+xhub/litellm:1.95.27-<git-commit>
+xhub/litellm:1.95.27-nonroot-<git-commit>
 ```
 
 并额外记录镜像 digest、Dockerfile、构建参数、`uv.lock` 和 `package-lock.json` 哈希，以及 UI 测试、镜像扫描和容器健康检查结果。

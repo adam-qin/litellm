@@ -1128,8 +1128,9 @@ class GenerateKeyRequest(KeyRequestBase):
         description=(
             "XHub only: skip virtual-key storage in the secret manager for this "
             "request and return the plaintext key in the response instead. "
-            "Restricted to Proxy Admins and requires "
-            "XHUB_ALLOW_SKIP_VAULT_STORAGE=true on the deployment."
+            "Applies to /key/generate and /key/regenerate. Restricted to Proxy "
+            "Admins and requires XHUB_ALLOW_SKIP_VAULT_STORAGE=true on the "
+            "deployment."
         ),
     )
 

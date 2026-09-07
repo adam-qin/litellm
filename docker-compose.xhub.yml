@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    image: xhub/litellm:1.95.26
+    image: xhub/litellm:1.95.27
     restart: unless-stopped
     ports:
       - "4000:4000"
@@ -15,8 +15,8 @@ services:
       # XHub self-hosted: allow the HashiCorp Vault secret manager without a
       # LiteLLM Enterprise license. Default is unset (upstream premium gate on).
       # XHUB_ALLOW_COMMUNITY_SECRET_MANAGERS: "true"
-      # Allow Proxy Admin callers to skip XHub Vault storage on /key/generate.
-      # Default is unset (reject xhub_skip_vault_storage).
+      # Allow Proxy Admin callers to skip XHub Vault storage on /key/generate
+      # and /key/regenerate. Default is unset (reject xhub_skip_vault_storage).
       # XHUB_ALLOW_SKIP_VAULT_STORAGE: "true"
     env_file:
       - path: .env

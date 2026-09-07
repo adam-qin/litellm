@@ -2041,6 +2041,7 @@ async def prepare_key_update_data(
     data_json.pop("key", None)
     data_json.pop("new_key", None)
     data_json.pop("grace_period", None)  # Request-only param, not a DB column
+    data_json.pop("xhub_skip_vault_storage", None)  # Request-only control flag
     if (
         data.metadata is not None
         and data.metadata.get("service_account_id") is not None
@@ -4649,7 +4650,14 @@ async def _execute_virtual_key_regeneration(
                 prisma_client=prisma_client,
             )
 
-    vault_only_delivery = _is_vault_only_key_delivery(user_api_key_dict)
+    skip_vault_storage = _resolve_skip_vault_storage(
+        data=data,
+        user_api_key_dict=user_api_key_dict,
+        litellm_changed_by=litellm_changed_by,
+    )
+    vault_only_delivery = _is_vault_only_key_delivery(
+        user_api_key_dict, skip_vault_storage=skip_vault_storage
+    )
     new_token = await get_new_token(data=data, vault_only_delivery=vault_only_delivery)
     new_token_hash = hash_token(new_token)
     new_token_key_name = abbreviate_api_key(api_key=new_token)
@@ -4666,6 +4674,8 @@ async def _execute_virtual_key_regeneration(
             _validate_key_alias_format(key_alias=new_key_alias)
         verbose_proxy_logger.debug("non_default_values: %s", non_default_values)
     update_data.update(non_default_values)
+    # Control flag for this request only; never persisted on the key row.
+    update_data.pop("xhub_skip_vault_storage", None)
     update_data = prisma_client.jsonify_object(data=update_data)
 
     vault_secret_name: Optional[str] = None
@@ -4673,7 +4683,13 @@ async def _execute_virtual_key_regeneration(
     # every regenerate (manual and scheduled), not only Vault-only delivery.
     # This prevents the DB from publishing a new token while Vault still holds
     # the old value. The helper is a no-op when virtual-key storage is disabled.
-    if litellm._key_management_settings is not None and litellm._key_management_settings.store_virtual_keys is True:
+    # Callers that opted out with `xhub_skip_vault_storage` own the plaintext
+    # themselves and must not get a second copy written here.
+    if (
+        not skip_vault_storage
+        and litellm._key_management_settings is not None
+        and litellm._key_management_settings.store_virtual_keys is True
+    ):
         vault_secret_name = await KeyManagementEventHooks._rotate_virtual_key_in_secret_manager(
             current_secret_name=key_in_db.key_alias or f"virtual-key-{hashed_api_key}",
             new_secret_name=(

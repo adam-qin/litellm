@@ -188,12 +188,14 @@ class KeyManagementEventHooks:
         # Secret-manager rotation is completed synchronously by the regenerate
         # endpoint when requested. Keep the legacy hook path for callers that
         # invoke this hook directly, while avoiding a second write for the
-        # endpoint's already-committed rotation.
+        # endpoint's already-committed rotation. Callers that opted out with
+        # `xhub_skip_vault_storage` own the plaintext themselves.
         if (
             not secret_manager_already_rotated
             and data is not None
             and response.token_id is not None
             and response.key is not None
+            and getattr(data, "xhub_skip_vault_storage", None) is not True
         ):
             try:
                 initial_secret_name = existing_key_row.key_alias or f"virtual-key-{existing_key_row.token}"
