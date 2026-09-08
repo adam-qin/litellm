@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 420" width="100%" role="img" aria-labelledby="t2 d2">
+  <title id="t2">Three non-inheriting role planes</title>
+  <desc id="d2">Global user_role, organization membership role, and team members_with_roles are three independent planes. A person can be internal_user globally, org_admin in one org, and team admin in one team only.</desc>
+  <rect x="40" y="36" width="190" height="348" rx="12" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="64" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#3C3489">Global</text>
+  <text x="135" y="84" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">user_role</text>
+  <rect x="56" y="104" width="158" height="40" rx="8" fill="#CECBF6" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="128" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#26215C">proxy_admin</text>
+  <rect x="56" y="154" width="158" height="40" rx="8" fill="#AFA9EC" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="178" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#26215C">proxy_admin_viewer</text>
+  <rect x="56" y="204" width="158" height="40" rx="8" fill="#CECBF6" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="228" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#26215C">internal_user</text>
+  <rect x="56" y="254" width="158" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="278" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">org_admin string only</text>
+  <text x="56" y="322" font-family="sans-serif" font-size="12" fill="#534AB7">viewer deprecated</text>
+  <text x="56" y="342" font-family="sans-serif" font-size="12" fill="#534AB7">team / customer JWT</text>
+  <rect x="245" y="36" width="190" height="348" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="340" y="64" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#085041">Organization</text>
+  <text x="340" y="84" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#0F6E56">membership.user_role</text>
+  <rect x="261" y="104" width="158" height="40" rx="8" fill="#9FE1CB" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="340" y="128" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#04342C">org_admin</text>
+  <rect x="261" y="154" width="158" height="40" rx="8" fill="#5DCAA5" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="340" y="178" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#04342C">internal_user</text>
+  <rect x="261" y="204" width="158" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="340" y="228" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#0F6E56">internal_user_viewer</text>
+  <text x="261" y="272" font-family="sans-serif" font-size="12" fill="#0F6E56">must match org_id</text>
+  <text x="261" y="292" font-family="sans-serif" font-size="12" fill="#0F6E56">cannot create orgs</text>
+  <text x="261" y="312" font-family="sans-serif" font-size="12" fill="#0F6E56">cannot edit other orgs</text>
+  <rect x="450" y="36" width="190" height="348" rx="12" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="545" y="64" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#633806">Team</text>
+  <text x="545" y="84" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#854F0B">members_with_roles</text>
+  <rect x="466" y="104" width="158" height="40" rx="8" fill="#FAC775" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="545" y="128" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#412402">admin</text>
+  <rect x="466" y="154" width="158" height="40" rx="8" fill="#EF9F27" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="545" y="178" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#412402">user</text>
+  <text x="466" y="222" font-family="sans-serif" font-size="12" fill="#854F0B">admin = Team Admin</text>
+  <text x="466" y="242" font-family="sans-serif" font-size="12" fill="#854F0B">user uses key ACL list</text>
+  <text x="466" y="262" font-family="sans-serif" font-size="12" fill="#854F0B">cannot raise max_budget</text>
+  <text x="466" y="282" font-family="sans-serif" font-size="12" fill="#854F0B">cannot create teams</text>
+  <text x="40" y="408" font-family="sans-serif" font-size="12" fill="#5F5E5A">Do not treat Proxy Admin userRole Admin as Team Admin of every team.</text>
+</svg>

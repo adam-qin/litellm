@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 500" width="100%" role="img" aria-labelledby="t4 d4">
+  <title id="t4">Team exclusive model routing</title>
+  <desc id="d4">The same public model name can bind different providers per team. Router should_include_deployment keeps each team on its own deployment and credentials.</desc>
+  <rect x="40" y="36" width="600" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="340" y="68" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Client calls model gpt-4o</text>
+  <rect x="40" y="112" width="186" height="140" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="133" y="140" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="500" fill="#0C447C">Key team_id A</text>
+  <text x="133" y="164" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#185FA5">map_team_model</text>
+  <rect x="56" y="180" width="154" height="52" rx="8" fill="#B5D4F4" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="133" y="202" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#042C53">team A gpt-4o</text>
+  <text x="133" y="220" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#042C53">A credentials</text>
+  <rect x="247" y="112" width="186" height="140" rx="12" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+  <text x="340" y="140" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="500" fill="#27500A">Key team_id B</text>
+  <text x="340" y="164" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#3B6D11">map_team_model</text>
+  <rect x="263" y="180" width="154" height="52" rx="8" fill="#C0DD97" stroke="#3B6D11" stroke-width="0.5"/>
+  <text x="340" y="202" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#173404">team B gpt-4o</text>
+  <text x="340" y="220" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#173404">B credentials</text>
+  <rect x="454" y="112" width="186" height="140" rx="12" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="547" y="140" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="500" fill="#444441">No team / sentinel</text>
+  <text x="547" y="164" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#5F5E5A">litellm-dashboard</text>
+  <rect x="470" y="180" width="154" height="52" rx="8" fill="#D3D1C7" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="547" y="202" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#2C2C2A">global gpt-4o</text>
+  <text x="547" y="220" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#2C2C2A">if unique resolve</text>
+  <rect x="40" y="276" width="600" height="188" rx="12" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="56" y="304" font-family="sans-serif" font-size="14" font-weight="500" fill="#712B13">should_include_deployment</text>
+  <text x="56" y="332" font-family="sans-serif" font-size="13" fill="#993C1D">1. team_id matches and name == team_public_model_name</text>
+  <text x="56" y="356" font-family="sans-serif" font-size="13" fill="#993C1D">2. else internal model_name fallback</text>
+  <text x="56" y="380" font-family="sans-serif" font-size="13" fill="#993C1D">3. global only if this team has no same-name override</text>
+  <text x="56" y="404" font-family="sans-serif" font-size="13" fill="#993C1D">4. other teams deployments always false</text>
+  <text x="56" y="436" font-family="sans-serif" font-size="12" fill="#993C1D">Playground sentinel resolves only when exactly one real team owns the public name.</text>
+</svg>
