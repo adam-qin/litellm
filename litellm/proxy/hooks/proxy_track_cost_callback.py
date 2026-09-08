@@ -146,10 +146,16 @@ class _ProxyDBLogger(CustomLogger):
             if request_data.get("litellm_trace_id") is None:
                 request_data["litellm_trace_id"] = getattr(_litellm_logging_obj, "litellm_trace_id", None)
 
-        # Use the actual request start time from the logging object so that
-        # failed requests record the real duration instead of 0.
+        # Prefer the original request start time so failed SpendLogs show
+        # the real duration instead of 0. ``post_call_failure_hook`` pops
+        # ``litellm_logging_obj`` (not serialisable) but lifts ``start_time``
+        # onto request_data first; fall back to the logging object when the
+        # hook is invoked directly in tests.
         actual_start_time = datetime.now()
-        if _litellm_logging_obj is not None:
+        lifted_start = request_data.get("start_time")
+        if lifted_start is not None:
+            actual_start_time = lifted_start
+        elif _litellm_logging_obj is not None:
             obj_start = getattr(_litellm_logging_obj, "start_time", None)
             if obj_start is not None:
                 actual_start_time = obj_start

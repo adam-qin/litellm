@@ -63,6 +63,10 @@ _SYNC_ITER_EXHAUSTED = object()
 _GCHUNK_FIELDS: frozenset = frozenset(GChunk.__annotations__)
 
 
+class IncompleteStreamError(Exception):
+    """Upstream closed a streaming response without a terminal finish_reason."""
+
+
 def _next_sync_or_exhausted(it: Any) -> Any:
     """
     Call next(it) from a thread and return _SYNC_ITER_EXHAUSTED on StopIteration.
@@ -1787,6 +1791,8 @@ class CustomStreamWrapper:
                     return response
 
         except StopIteration:
+            if self._is_incomplete_partial_stream():
+                self._fail_incomplete_stream(prefer_async_handlers=False)
             if self.sent_last_chunk is True:
                 try:
                     complete_streaming_response = litellm.stream_chunk_builder(
@@ -2000,6 +2006,8 @@ class CustomStreamWrapper:
                         self.chunks.append(processed_chunk)
                         return processed_chunk
         except (StopAsyncIteration, StopIteration):
+            if self._is_incomplete_partial_stream():
+                self._fail_incomplete_stream(prefer_async_handlers=True)
             return await self._finalize_completed_stream(cache_hit=cache_hit)
         except httpx.TimeoutException as e:  # if httpx read timeout error occues
             traceback_exception = traceback.format_exc()
@@ -2122,6 +2130,49 @@ class CustomStreamWrapper:
             asyncio.create_task(
                 self.logging_obj.dispatch_failure_handlers(e, traceback_exception, prefer_async_handlers=True)
             )
+        self._handle_stream_fallback_error(e)
+
+    def _is_incomplete_partial_stream(self) -> bool:
+        """True when the iterator ended after delivering tokens but no finish_reason.
+
+        An empty stream (no chunks yet) still uses the historical synthetic
+        ``stop`` so providers that close without a terminal chunk are not
+        broken. A stream that already yielded content and then went silent
+        is a mid-stream interrupt (overload / dropped connection).
+        """
+        return (
+            self.received_finish_reason is None
+            and self.intermittent_finish_reason is None
+            and bool(self.chunks or self.sent_first_chunk)
+        )
+
+    def _fail_incomplete_stream(self, *, prefer_async_handlers: bool) -> NoReturn:
+        """Treat a clean EOF with no terminal finish_reason as a mid-stream failure.
+
+        Providers under overload (or a dropped connection) may yield the first
+        token and then close the iterator without an error object or
+        ``finish_reason``. The previous path fabricated ``stop`` via
+        ``finish_reason_handler`` and logged the request as success. Record
+        recovered partial usage as a failure instead so SpendLogs / callbacks
+        match the actual outcome, and wrap as ``MidStreamFallbackError`` so
+        the Router can still switch deployments.
+        """
+        e = IncompleteStreamError(
+            "Stream ended without finish_reason; upstream closed after a partial response"
+        )
+        traceback_exception = traceback.format_exc()
+        if self.logging_obj is not None:
+            self._record_partial_usage_for_failure()
+            if prefer_async_handlers:
+                asyncio.create_task(
+                    self.logging_obj.dispatch_failure_handlers(
+                        e, traceback_exception, prefer_async_handlers=True
+                    )
+                )
+            else:
+                threading.Thread(
+                    target=self.logging_obj.failure_handler, args=(e, traceback_exception)
+                ).start()
         self._handle_stream_fallback_error(e)
 
     def _record_partial_usage_for_failure(self) -> None:

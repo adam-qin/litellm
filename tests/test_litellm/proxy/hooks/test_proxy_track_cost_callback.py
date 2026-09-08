@@ -993,6 +993,50 @@ async def test_async_post_call_failure_hook_uses_actual_start_time():
         assert duration >= 55, f"Duration should be ~60s, got {duration}s"
 
 
+@pytest.mark.asyncio
+async def test_async_post_call_failure_hook_uses_lifted_start_time_without_logging_obj():
+    """``post_call_failure_hook`` pops ``litellm_logging_obj`` after lifting
+    ``start_time`` onto ``request_data``. The spend writer must still record
+    the original duration when only the lifted field remains.
+    """
+    from datetime import timedelta
+
+    logger = _ProxyDBLogger()
+    user_api_key_dict = UserAPIKeyAuth(
+        api_key="test_api_key",
+        user_id="test_user_id",
+        team_id="test_team_id",
+        org_id="test_org_id",
+        end_user_id="test_end_user_id",
+    )
+    simulated_start = datetime.now() - timedelta(seconds=60)
+    request_data = {
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "metadata": {},
+        "proxy_server_request": {},
+        "start_time": simulated_start,
+        "custom_llm_provider": "openai",
+    }
+
+    with patch(
+        "litellm.proxy.db.db_spend_update_writer.DBSpendUpdateWriter.update_database",
+        new_callable=AsyncMock,
+    ) as mock_update_database:
+        await logger.async_post_call_failure_hook(
+            request_data=request_data,
+            original_exception=Exception("Timeout error"),
+            user_api_key_dict=user_api_key_dict,
+        )
+
+        mock_update_database.assert_called_once()
+        call_args = mock_update_database.call_args[1]
+        assert call_args["start_time"] == simulated_start
+        duration = (call_args["end_time"] - call_args["start_time"]).total_seconds()
+        assert duration >= 55, f"Duration should be ~60s, got {duration}s"
+        assert call_args["kwargs"]["custom_llm_provider"] == "openai"
+
+
 async def _invoke_failure_hook_with_raised_exception():
     """Run the failure hook with an exception that has a real ``__traceback__``.
 

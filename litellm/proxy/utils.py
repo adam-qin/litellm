@@ -2107,25 +2107,11 @@ class ProxyLogging:
                 original_exception=original_exception,
             )
 
-        # Lift the first-handoff instant onto request_data (top-level
-        # internal key, not metadata) so failure-path callbacks can still
-        # compute preprocessing latency after the logging object is popped.
-        _logging_obj = request_data.get("litellm_logging_obj")
-        if _logging_obj is not None:
-            _model_call_details = getattr(_logging_obj, "model_call_details", {})
-            _first_handoff = _model_call_details.get("first_api_call_start_time")
-            if _first_handoff is not None:
-                request_data["first_api_call_start_time"] = _first_handoff
-
-            # A stream that broke mid-flight still billed the provider for the
-            # chunks already delivered; the streaming handler stashes that
-            # recovered usage and cost here. Lift them onto request_data so the
-            # failure-path spend callbacks (which run after the logging object
-            # is popped) record the real partial spend instead of zero.
-            _recovered_usage = _model_call_details.get("combined_usage_object")
-            if _recovered_usage is not None:
-                request_data["combined_usage_object"] = _recovered_usage
-                request_data["response_cost"] = _model_call_details.get("response_cost")
+        # Lift fields the spend-log writer needs onto request_data BEFORE
+        # popping litellm_logging_obj. The object is not serialisable, so
+        # callbacks must not receive it; without this copy, failed SpendLogs
+        # show Duration=0 and empty provider / model id / api_base.
+        self._lift_logging_context_for_failure_hooks(request_data)
 
         # Remove before callbacks iterate — not serialisable
         request_data.pop("litellm_logging_obj", None)
@@ -2166,6 +2152,92 @@ class ProxyLogging:
                 verbose_proxy_logger.exception(f"[Non-Blocking] Error setting up post_call_failure_hook callback: {e}")
 
         return transformed_exception
+
+    @staticmethod
+    def _lift_logging_context_for_failure_hooks(request_data: dict) -> None:
+        """Copy spend-log fields off ``litellm_logging_obj`` onto ``request_data``.
+
+        ``post_call_failure_hook`` pops the logging object (it is not
+        serialisable) before iterating callbacks. Without this copy, the
+        spend-log writer sees ``datetime.now()`` for both start and end
+        (Duration=0) and empty provider / model id / api_base.
+
+        Existing top-level keys on ``request_data`` win so a caller that
+        already set them is not overwritten.
+        """
+        logging_obj = request_data.get("litellm_logging_obj")
+        if logging_obj is None:
+            return
+
+        model_call_details = getattr(logging_obj, "model_call_details", None) or {}
+        litellm_params = model_call_details.get("litellm_params") or {}
+        if not isinstance(litellm_params, dict):
+            litellm_params = {}
+        request_metadata = litellm_params.get("metadata")
+        if not isinstance(request_metadata, dict):
+            request_metadata = {}
+        litellm_metadata = litellm_params.get("litellm_metadata")
+        if not isinstance(litellm_metadata, dict):
+            litellm_metadata = {}
+        # ``litellm_metadata`` carries proxy/spend fields while ``metadata``
+        # may carry user/provider fields. Keep both; internal metadata wins
+        # for collisions, matching ``get_litellm_metadata_from_kwargs``.
+        metadata = dict(litellm_metadata)
+        metadata.update(
+            {
+                key: value
+                for key, value in request_metadata.items()
+                if "user_api_key" in key
+            }
+        )
+        model_info = metadata.get("model_info") or {}
+        if not isinstance(model_info, dict):
+            model_info = {}
+
+        first_handoff = model_call_details.get("first_api_call_start_time")
+        if first_handoff is not None and "first_api_call_start_time" not in request_data:
+            request_data["first_api_call_start_time"] = first_handoff
+
+        recovered_usage = model_call_details.get("combined_usage_object")
+        if recovered_usage is not None and "combined_usage_object" not in request_data:
+            request_data["combined_usage_object"] = recovered_usage
+            if "response_cost" not in request_data:
+                request_data["response_cost"] = model_call_details.get("response_cost")
+
+        obj_start = getattr(logging_obj, "start_time", None)
+        if obj_start is not None and "start_time" not in request_data:
+            request_data["start_time"] = obj_start
+
+        if not request_data.get("standard_logging_object"):
+            request_data["standard_logging_object"] = model_call_details.get("standard_logging_object")
+        if request_data.get("litellm_trace_id") is None:
+            request_data["litellm_trace_id"] = getattr(logging_obj, "litellm_trace_id", None)
+
+        if not request_data.get("custom_llm_provider"):
+            request_data["custom_llm_provider"] = (
+                model_call_details.get("custom_llm_provider") or litellm_params.get("custom_llm_provider") or ""
+            )
+        if not request_data.get("model"):
+            request_data["model"] = model_call_details.get("model") or litellm_params.get("model") or ""
+
+        if "litellm_params" not in request_data:
+            request_data["litellm_params"] = {}
+        request_litellm_params = request_data["litellm_params"]
+        if not isinstance(request_litellm_params, dict):
+            request_litellm_params = {}
+            request_data["litellm_params"] = request_litellm_params
+        if not request_litellm_params.get("api_base"):
+            api_base = litellm_params.get("api_base") or model_call_details.get("api_base")
+            if api_base:
+                request_litellm_params["api_base"] = api_base
+
+        request_metadata = request_data.get("metadata")
+        if not isinstance(request_metadata, dict):
+            request_metadata = {}
+            request_data["metadata"] = request_metadata
+        for key, value in metadata.items():
+            if key not in request_metadata:
+                request_metadata[key] = value
 
     def _is_proxy_only_llm_api_error(
         self,

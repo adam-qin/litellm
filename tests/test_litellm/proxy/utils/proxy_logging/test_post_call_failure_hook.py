@@ -95,6 +95,73 @@ async def test_post_call_failure_hook_no_callbacks_returns_none(
 
 
 @pytest.mark.asyncio
+async def test_post_call_failure_hook_lifts_logging_context_before_pop(
+    proxy_logging, make_user_api_key_auth, mock_callbacks_disabled
+):
+    """Failed SpendLogs used to show Duration=0 and empty provider fields
+    because ``litellm_logging_obj`` was popped before the spend writer ran.
+    The object must still be popped (not serialisable); the fields it holds
+    must land on ``request_data`` first.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    started = datetime.now(timezone.utc) - timedelta(seconds=12)
+    logging_obj = MagicMock()
+    logging_obj.start_time = started
+    logging_obj.litellm_trace_id = "trace-from-logging-obj"
+    logging_obj.model_call_details = {
+        "first_api_call_start_time": started,
+        "custom_llm_provider": "openai",
+        "model": "gpt-5.6-sol",
+        "combined_usage_object": "usage-stub",
+        "response_cost": 0.42,
+        "standard_logging_object": {"trace_id": "trace-from-logging-obj"},
+        "litellm_params": {
+            "api_base": "https://api.example.com/v1",
+            "custom_llm_provider": "openai",
+            "metadata": {
+                "user_api_key": "user-key-abc",
+            },
+            "litellm_metadata": {
+                "model_info": {"id": "model-id-abc"},
+                "model_group": "gpt-5.6-sol",
+                "attempted_retries": 2,
+            },
+        },
+    }
+
+    proxy_logging.alert_types = []
+    request_data = {
+        "litellm_call_id": "abc",
+        "litellm_logging_obj": logging_obj,
+        "messages": [],
+    }
+    proxy_logging._lift_logging_context_for_failure_hooks(request_data)
+    assert request_data["metadata"]["user_api_key"] == "user-key-abc"
+    assert request_data["metadata"]["model_info"]["id"] == "model-id-abc"
+    out = await proxy_logging.post_call_failure_hook(
+        request_data=request_data,
+        original_exception=ValueError("Timeout on reading data from socket"),
+        user_api_key_dict=make_user_api_key_auth(),
+    )
+
+    assert out is None
+    assert "litellm_logging_obj" not in request_data
+    assert request_data["start_time"] == started
+    assert request_data["first_api_call_start_time"] == started
+    assert request_data["custom_llm_provider"] == "openai"
+    assert request_data["model"] == "gpt-5.6-sol"
+    assert request_data["combined_usage_object"] == "usage-stub"
+    assert request_data["response_cost"] == 0.42
+    assert request_data["litellm_trace_id"] == "trace-from-logging-obj"
+    assert request_data["standard_logging_object"]["trace_id"] == "trace-from-logging-obj"
+    assert request_data["litellm_params"]["api_base"] == "https://api.example.com/v1"
+    assert request_data["metadata"]["model_info"]["id"] == "model-id-abc"
+    assert request_data["metadata"]["model_group"] == "gpt-5.6-sol"
+    assert request_data["metadata"]["attempted_retries"] == 2
+
+
+@pytest.mark.asyncio
 async def test_post_call_failure_hook_callback_returns_http_exception(
     proxy_logging, make_user_api_key_auth, monkeypatch
 ):

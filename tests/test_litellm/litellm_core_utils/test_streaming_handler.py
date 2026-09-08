@@ -3355,3 +3355,101 @@ async def test_transport_read_error_before_finish_reason_raises(logging_obj: Log
         if chunk.choices and chunk.choices[0].finish_reason
     ]
     assert fabricated_finish_reasons == []
+
+
+@pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.asyncio
+async def test_partial_stream_without_finish_reason_is_logged_as_failure(
+    logging_obj: Logging, sync_mode
+):
+    """First token then a silent EOF (overload / dropped connection) must not
+    be logged as success. Previously ``finish_reason_handler`` fabricated
+    ``stop`` and ``dispatch_success_handlers`` wrote a success SpendLog.
+    """
+    from litellm.exceptions import MidStreamFallbackError
+
+    partial_chunks = [
+        ModelResponseStream(
+            id="chatcmpl-partial-overload",
+            created=1742056047,
+            model="gpt-5.6-sol",
+            object="chat.completion.chunk",
+            choices=[
+                StreamingChoices(
+                    finish_reason=None,
+                    index=0,
+                    delta=Delta(content="Hello", role="assistant"),
+                )
+            ],
+            usage=None,
+        )
+    ]
+    response = CustomStreamWrapper(
+        completion_stream=ModelResponseListIterator(model_responses=partial_chunks),
+        model="gpt-5.6-sol",
+        custom_llm_provider="openai",
+        logging_obj=logging_obj,
+    )
+    logging_obj.dispatch_failure_handlers = AsyncMock()
+    logging_obj.dispatch_success_handlers = AsyncMock()
+    logging_obj.failure_handler = MagicMock()
+    logging_obj.success_handler = MagicMock()
+
+    received = []
+    with pytest.raises(MidStreamFallbackError):
+        if sync_mode:
+            for chunk in response:
+                received.append(chunk)
+        else:
+            async for chunk in response:
+                received.append(chunk)
+
+    contents = [
+        chunk.choices[0].delta.content
+        for chunk in received
+        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content
+    ]
+    assert contents == ["Hello"]
+    fabricated_finish_reasons = [
+        chunk.choices[0].finish_reason
+        for chunk in received
+        if chunk.choices and chunk.choices[0].finish_reason
+    ]
+    assert fabricated_finish_reasons == []
+    if sync_mode:
+        logging_obj.failure_handler.assert_called()
+        # Per-chunk streaming logs still call success_handler for the token
+        # itself (finish_reason=None). The bug was the *terminal* success
+        # log that fabricated finish_reason="stop".
+        for call in logging_obj.success_handler.call_args_list:
+            logged = call.args[0] if call.args else None
+            choices = getattr(logged, "choices", None) or []
+            assert all(getattr(choice, "finish_reason", None) in (None, "") for choice in choices)
+    else:
+        logging_obj.dispatch_failure_handlers.assert_called()
+        logging_obj.dispatch_success_handlers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_without_chunks_still_synthesizes_stop(logging_obj: Logging):
+    """An empty iterator (no tokens at all) keeps the historical synthetic
+    ``stop`` so providers that close without a terminal chunk are not
+    treated as mid-stream interrupts.
+    """
+    response = CustomStreamWrapper(
+        completion_stream=ModelResponseListIterator(model_responses=[]),
+        model="gpt-5.6-sol",
+        custom_llm_provider="openai",
+        logging_obj=logging_obj,
+    )
+    logging_obj.dispatch_failure_handlers = AsyncMock()
+    logging_obj.dispatch_success_handlers = AsyncMock()
+
+    chunks = [chunk async for chunk in response]
+    finish_reasons = [
+        chunk.choices[0].finish_reason
+        for chunk in chunks
+        if chunk.choices and chunk.choices[0].finish_reason
+    ]
+    assert finish_reasons == ["stop"]
+    logging_obj.dispatch_failure_handlers.assert_not_called()
