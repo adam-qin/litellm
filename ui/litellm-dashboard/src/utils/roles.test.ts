@@ -5,6 +5,7 @@ import {
   isWritableAdminRole,
   isUserTeamAdminForAnyTeam,
   isUserTeamAdminForSingleTeam,
+  isUserTeamAdminForTeamId,
   rolesAllowedToViewWriteScopedPages,
   rolesWithWriteAccess,
 } from "./roles";
@@ -166,6 +167,46 @@ describe("roles", () => {
 
     it("should return false when teams is empty array", () => {
       expect(isUserTeamAdminForAnyTeam([], "user-1")).toBe(false);
+    });
+  });
+
+  describe("isUserTeamAdminForTeamId", () => {
+    const teams: Team[] = [
+      {
+        team_id: "team-1",
+        team_alias: "Engineering",
+        models: [],
+        max_budget: null,
+        budget_duration: null,
+        tpm_limit: null,
+        rpm_limit: null,
+        organization_id: "org-1",
+        created_at: "2024-01-01",
+        spend: 0,
+        keys: [],
+        members_with_roles: [
+          { user_id: "alice", user_email: "alice@test.com", role: "admin" },
+          { user_id: "bob", user_email: "bob@test.com", role: "user" },
+        ],
+      },
+    ];
+
+    it("returns true when the user is admin of the given team", () => {
+      expect(isUserTeamAdminForTeamId(teams, "team-1", "alice")).toBe(true);
+    });
+
+    it("returns false when the user is only a member of the given team", () => {
+      expect(isUserTeamAdminForTeamId(teams, "team-1", "bob")).toBe(false);
+    });
+
+    it("returns false for a different team id", () => {
+      expect(isUserTeamAdminForTeamId(teams, "team-other", "alice")).toBe(false);
+    });
+
+    it("returns false when team id or user id is missing", () => {
+      expect(isUserTeamAdminForTeamId(teams, null, "alice")).toBe(false);
+      expect(isUserTeamAdminForTeamId(teams, "team-1", null)).toBe(false);
+      expect(isUserTeamAdminForTeamId(null, "team-1", "alice")).toBe(false);
     });
   });
 

@@ -5,6 +5,7 @@ import httpx
 from fastapi import HTTPException, status
 
 import litellm
+from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.router_utils.common_utils import _is_proxy_admin_request
 
@@ -182,6 +183,64 @@ def get_team_id_from_data(data: dict) -> Optional[str]:
     ):
         return data["litellm_metadata"].get("user_api_key_team_id")
     return None
+
+
+def _overwrite_request_team_id(data: dict, team_id: Optional[str]) -> None:
+    """Rewrite metadata team_id so Router deployment lookup sees the resolved value."""
+    for key in ("metadata", "litellm_metadata"):
+        bucket = data.get(key)
+        if isinstance(bucket, dict) and "user_api_key_team_id" in bucket:
+            bucket["user_api_key_team_id"] = team_id
+
+
+def _auth_from_route_data(data: dict, user_api_key_dict: Optional[UserAPIKeyAuth]) -> Optional[UserAPIKeyAuth]:
+    if user_api_key_dict is not None:
+        return user_api_key_dict
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    litellm_metadata = data.get("litellm_metadata") if isinstance(data.get("litellm_metadata"), dict) else {}
+    maybe_auth = metadata.get("user_api_key_auth") or litellm_metadata.get("user_api_key_auth")
+    return maybe_auth if isinstance(maybe_auth, UserAPIKeyAuth) else None
+
+
+async def _resolve_dashboard_session_team_id(
+    data: dict,
+    llm_router: Optional[LitellmRouter],
+    team_id: Optional[str],
+    user_api_key_dict: Optional[UserAPIKeyAuth],
+) -> Optional[str]:
+    """Treat the UI session sentinel team as no-team, unless a team public name matches.
+
+    Playground / dashboard JWTs always carry ``team_id=litellm-dashboard``. Router
+    lookup by that sentinel never finds team-scoped deployments, so Team Admin
+    inference 400s even though the model exists. Resolve the caller's real teams
+    and map the requested public name; if exactly one team owns it, use that
+    team. Otherwise fall back to no-team so global models still work.
+    """
+    if team_id != UI_SESSION_TOKEN_TEAM_ID:
+        return team_id
+
+    resolved_team_id: Optional[str] = None
+    model = data.get("model")
+    auth = _auth_from_route_data(data, user_api_key_dict)
+    if (
+        auth is not None
+        and isinstance(model, str)
+        and model
+        and llm_router is not None
+        and isinstance(llm_router, litellm.Router)
+    ):
+        from litellm.proxy._experimental.mcp_server.ui_session_utils import resolve_ui_session_team_ids
+
+        matching_team_ids = [
+            real_team_id
+            for real_team_id in await resolve_ui_session_team_ids(auth)
+            if llm_router.map_team_model(model, real_team_id) is not None
+        ]
+        if len(matching_team_ids) == 1:
+            resolved_team_id = matching_team_ids[0]
+
+    _overwrite_request_team_id(data, resolved_team_id)
+    return resolved_team_id
 
 
 _shared_session_lock: Optional[asyncio.Lock] = None
@@ -390,7 +449,12 @@ async def route_request(
 
     data.pop("enable_tag_filtering", None)
 
-    team_id = get_team_id_from_data(data)
+    team_id = await _resolve_dashboard_session_team_id(
+        data=data,
+        llm_router=llm_router,
+        team_id=get_team_id_from_data(data),
+        user_api_key_dict=user_api_key_dict,
+    )
     router_model_names = llm_router.model_names if llm_router is not None else []
     is_proxy_admin_without_team = team_id is None and _is_proxy_admin_request(data)
 

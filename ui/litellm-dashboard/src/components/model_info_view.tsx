@@ -1,5 +1,6 @@
 import { useModelCostMap } from "@/app/(dashboard)/hooks/models/useModelCostMap";
 import { useModelHub, useModelsInfo } from "@/app/(dashboard)/hooks/models/useModels";
+import { useTeams } from "@/app/(dashboard)/hooks/teams/useTeams";
 import { useQueryClient } from "@tanstack/react-query";
 import { transformModelData } from "@/app/(dashboard)/models-and-endpoints/utils/modelDataTransformer";
 import { InfoCircleOutlined } from "@ant-design/icons";
@@ -49,6 +50,7 @@ import UpdateModelCredentialsModal from "./update_model_credentials_modal";
 import NumericalInput from "./shared/numerical_input";
 import { Tag } from "./tag_management/types";
 import { getDisplayModelName } from "./view_model/model_name_display";
+import { isUserTeamAdminForTeamId } from "@/utils/roles";
 
 interface ModelInfoViewProps {
   modelId: string;
@@ -154,6 +156,7 @@ export default function ModelInfoView({
   const { data: rawModelDataResponse, isLoading: isLoadingModel } = useModelsInfo(1, 50, undefined, modelId);
   const { data: modelCostMapData } = useModelCostMap();
   const { data: modelHubData } = useModelHub();
+  const { data: teams } = useTeams();
 
   // Transform the model data
   const getProviderFromModel = (model: string) => {
@@ -177,7 +180,10 @@ export default function ModelInfoView({
   const modelData = transformedModelData;
 
   const canEditModel =
-    (userRole === "Admin" || modelData?.model_info?.created_by === userID) && modelData?.model_info?.db_model;
+    (userRole === "Admin" ||
+      modelData?.model_info?.created_by === userID ||
+      isUserTeamAdminForTeamId(teams, modelData?.model_info?.team_id, userID)) &&
+    modelData?.model_info?.db_model;
   const isAdmin = userRole === "Admin";
   const isAutoRouter =
     modelData?.litellm_params?.auto_router_config != null ||
@@ -748,7 +754,7 @@ export default function ModelInfoView({
                       </TremorButton>
                     )
                   ) : (
-                    <Tooltip title="Only DB models can be edited. You must be an admin or the creator of the model to edit it.">
+                    <Tooltip title="Only DB models can be edited. You must be a proxy admin, the creator, or a Team Admin of the model's team to edit it.">
                       <InfoCircleOutlined />
                     </Tooltip>
                   )}

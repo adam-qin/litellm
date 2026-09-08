@@ -24,12 +24,25 @@ vi.mock("@/components/model_info_view", () => ({
   default: ({ modelId }: { modelId: string }) => <div data-testid="model-info">model:{modelId}</div>,
 }));
 vi.mock("@/components/team/TeamInfo", () => ({
-  default: ({ teamId }: { teamId: string }) => <div data-testid="team-info">team:{teamId}</div>,
+  default: ({
+    teamId,
+    is_team_admin,
+    is_proxy_admin,
+  }: {
+    teamId: string;
+    is_team_admin: boolean;
+    is_proxy_admin: boolean;
+  }) => (
+    <div data-testid="team-info">
+      team:{teamId} team-admin:{String(is_team_admin)} proxy-admin:{String(is_proxy_admin)}
+    </div>
+  ),
 }));
 
 const mockUseAuthorized = vi.fn();
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({ default: () => mockUseAuthorized() }));
-vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({ useTeams: () => ({ data: [] }) }));
+const mockUseTeams = vi.fn();
+vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({ useTeams: () => mockUseTeams() }));
 vi.mock("@/app/(dashboard)/hooks/uiSettings/useUISettings", () => ({
   useUISettings: () => ({ data: { values: {} } }),
 }));
@@ -54,6 +67,7 @@ describe("ModelsAndEndpointsPage", () => {
     detailState.modelId = null;
     detailState.teamId = null;
     mockUseAuthorized.mockReturnValue(ADMIN);
+    mockUseTeams.mockReturnValue({ data: [] });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global as any).ResizeObserver = class {
       observe() {}
@@ -89,6 +103,22 @@ describe("ModelsAndEndpointsPage", () => {
     detailState.teamId = "team-9";
     const { getByTestId } = renderPage();
     expect(getByTestId("team-info")).toHaveTextContent("team:team-9");
+  });
+
+  it("marks the team overlay as team-admin from membership, not from Proxy Admin role", () => {
+    detailState.teamId = "team-9";
+    mockUseAuthorized.mockReturnValue(NON_ADMIN);
+    mockUseTeams.mockReturnValue({
+      data: [
+        {
+          team_id: "team-9",
+          members_with_roles: [{ user_id: "u1", role: "admin" }],
+        },
+      ],
+    });
+    const { getByTestId } = renderPage();
+    expect(getByTestId("team-info")).toHaveTextContent("team-admin:true");
+    expect(getByTestId("team-info")).toHaveTextContent("proxy-admin:false");
   });
 
   it("hides admin-only tabs for a non-admin user", () => {

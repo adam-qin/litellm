@@ -238,6 +238,119 @@ async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_wi
 
 
 @pytest.mark.asyncio
+async def test_route_request_ui_session_resolves_team_public_model(monkeypatch):
+    """Dashboard JWT team_id=litellm-dashboard should map a team public name."""
+    import litellm
+    from unittest.mock import AsyncMock
+
+    from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
+    from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
+
+    router = litellm.Router(
+        model_list=[
+            {
+                "model_name": "internal-dw-gpt-5-6-luna",
+                "litellm_params": {
+                    "model": "openai/gpt-5.6",
+                    "api_key": "fake",
+                    "mock_response": "luna",
+                },
+                "model_info": {
+                    "id": "dw-gpt-5-6-luna",
+                    "team_id": "team-dw",
+                    "team_public_model_name": "dw/gpt-5.6-luna",
+                },
+            },
+            {
+                "model_name": "global-gpt",
+                "litellm_params": {
+                    "model": "openai/gpt-4o",
+                    "api_key": "fake",
+                    "mock_response": "global",
+                },
+                "model_info": {"id": "global-gpt"},
+            },
+        ]
+    )
+    ui_auth = UserAPIKeyAuth(
+        user_id="team-admin-1",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id=UI_SESSION_TOKEN_TEAM_ID,
+    )
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        AsyncMock(return_value=["team-dw"]),
+    )
+
+    team_data = {
+        "model": "dw/gpt-5.6-luna",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "metadata": {
+            "user_api_key_team_id": UI_SESSION_TOKEN_TEAM_ID,
+            "user_api_key_auth": ui_auth,
+        },
+    }
+    team_call = await route_request(
+        data=team_data,
+        llm_router=router,
+        user_model=None,
+        route_type="acompletion",
+        user_api_key_dict=ui_auth,
+    )
+    team_response = await team_call
+    assert team_response.choices[0].message.content == "luna"
+    assert team_data["metadata"]["user_api_key_team_id"] == "team-dw"
+
+    outsider_auth = UserAPIKeyAuth(
+        user_id="outsider-1",
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        team_id=UI_SESSION_TOKEN_TEAM_ID,
+    )
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        AsyncMock(return_value=["team-other"]),
+    )
+    with pytest.raises(ProxyModelNotFoundError):
+        await route_request(
+            data={
+                "model": "dw/gpt-5.6-luna",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": {
+                    "user_api_key_team_id": UI_SESSION_TOKEN_TEAM_ID,
+                    "user_api_key_auth": outsider_auth,
+                },
+            },
+            llm_router=router,
+            user_model=None,
+            route_type="acompletion",
+            user_api_key_dict=outsider_auth,
+        )
+
+    global_data = {
+        "model": "global-gpt",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "metadata": {
+            "user_api_key_team_id": UI_SESSION_TOKEN_TEAM_ID,
+            "user_api_key_auth": ui_auth,
+        },
+    }
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        AsyncMock(return_value=["team-dw"]),
+    )
+    global_call = await route_request(
+        data=global_data,
+        llm_router=router,
+        user_model=None,
+        route_type="acompletion",
+        user_api_key_dict=ui_auth,
+    )
+    global_response = await global_call
+    assert global_response.choices[0].message.content == "global"
+    assert global_data["metadata"]["user_api_key_team_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_route_request_no_model_required():
     """Test route types that don't require model parameter"""
     test_cases = [

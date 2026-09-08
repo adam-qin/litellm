@@ -310,6 +310,38 @@ describe("AllModelsTable", () => {
       expect(onDeleteClick).not.toHaveBeenCalled();
     });
 
+    it("lets a Team Admin delete a model owned by their team", async () => {
+      const user = userEvent.setup();
+      const onDeleteClick = vi.fn();
+      render(
+        <AllModelsTable
+          {...baseProps}
+          userRole="Internal User"
+          userID="bob"
+          teams={[
+            {
+              team_id: "team-1",
+              team_alias: "Engineering",
+              models: [],
+              max_budget: null,
+              budget_duration: null,
+              tpm_limit: null,
+              rpm_limit: null,
+              organization_id: "org-1",
+              created_at: "2024-01-01",
+              spend: 0,
+              keys: [],
+              members_with_roles: [{ user_id: "bob", user_email: "bob@test.com", role: "admin" }],
+            },
+          ]}
+          onDeleteClick={onDeleteClick}
+        />,
+      );
+
+      await user.click(screen.getByTestId("model-delete-model-1"));
+      expect(onDeleteClick).toHaveBeenCalledWith("model-1");
+    });
+
     it("blocks deleting a config model", async () => {
       const user = userEvent.setup();
       const onDeleteClick = vi.fn();

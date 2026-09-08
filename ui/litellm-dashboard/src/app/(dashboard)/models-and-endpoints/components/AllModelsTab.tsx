@@ -285,6 +285,7 @@ const AllModelsTab = ({
           availableModelAccessGroups={availableModelAccessGroups}
           userRole={userRole}
           userID={userId}
+          teams={teams}
           onModelIdClick={setSelectedModelId}
           onTeamIdClick={setSelectedTeamId}
           onDeleteClick={handleDeleteClick}

@@ -41,6 +41,18 @@ export const isUserTeamAdminForSingleTeam = (teamMemberWithRoles: Member[] | nul
   return teamMemberWithRoles.some((member) => member.user_id === userID && member.role === "admin");
 };
 
+export const isUserTeamAdminForTeamId = (
+  teams: Team[] | null | undefined,
+  teamId: string | null | undefined,
+  userID: string | null | undefined,
+): boolean => {
+  if (teams == null || !teamId || !userID) {
+    return false;
+  }
+  const team = teams.find((candidate) => candidate.team_id === teamId);
+  return isUserTeamAdminForSingleTeam(team?.members_with_roles ?? null, userID);
+};
+
 export const formatUserRole = (userRole: string): string => {
   if (!userRole) {
     return "Undefined Role";

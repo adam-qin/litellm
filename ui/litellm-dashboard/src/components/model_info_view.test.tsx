@@ -56,6 +56,11 @@ vi.mock("@/app/(dashboard)/hooks/models/useModelCostMap", () => ({
   useModelCostMap: (...args: any[]) => mockUseModelCostMap(...args),
 }));
 
+const mockUseTeams = vi.fn();
+vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
+  useTeams: (...args: any[]) => mockUseTeams(...args),
+}));
+
 const mockNotificationsManager = vi.mocked(NotificationsManager);
 const mockModelInfoV1Call = vi.mocked(networking.modelInfoV1Call);
 const mockCredentialGetCall = vi.mocked(networking.credentialGetCall);
@@ -127,6 +132,12 @@ describe("ModelInfoView", () => {
 
     mockUseModelCostMap.mockReturnValue({
       data: {},
+      isLoading: false,
+      error: null,
+    });
+
+    mockUseTeams.mockReturnValue({
+      data: [],
       isLoading: false,
       error: null,
     });
@@ -374,6 +385,72 @@ describe("ModelInfoView", () => {
     await waitFor(() => {
       const deleteButton = screen.getByRole("button", { name: /delete model/i });
       expect(deleteButton).toBeDisabled();
+    });
+  });
+
+  it("lets a Team Admin edit a model owned by their team even if they did not create it", async () => {
+    const teamModelData = {
+      ...defaultModelData,
+      model_info: {
+        ...defaultModelData.model_info,
+        created_by: "someone-else",
+        team_id: "team-1",
+      },
+    };
+    mockUseModelsInfo.mockReturnValue({
+      data: { data: [teamModelData] },
+      isLoading: false,
+      error: null,
+    });
+    mockUseTeams.mockReturnValue({
+      data: [
+        {
+          team_id: "team-1",
+          team_alias: "Engineering",
+          members_with_roles: [{ user_id: "123", role: "admin" }],
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} userRole="Internal User" />, { wrapper });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /edit settings/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /delete model/i })).toBeEnabled();
+    });
+  });
+
+  it("does not let a Team Admin of a different team edit the model", async () => {
+    const teamModelData = {
+      ...defaultModelData,
+      model_info: {
+        ...defaultModelData.model_info,
+        created_by: "someone-else",
+        team_id: "team-1",
+      },
+    };
+    mockUseModelsInfo.mockReturnValue({
+      data: { data: [teamModelData] },
+      isLoading: false,
+      error: null,
+    });
+    mockUseTeams.mockReturnValue({
+      data: [
+        {
+          team_id: "team-2",
+          team_alias: "Other",
+          members_with_roles: [{ user_id: "123", role: "admin" }],
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    render(<ModelInfoView {...DEFAULT_ADMIN_PROPS} userRole="Internal User" />, { wrapper });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /edit settings/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /delete model/i })).toBeDisabled();
     });
   });
 

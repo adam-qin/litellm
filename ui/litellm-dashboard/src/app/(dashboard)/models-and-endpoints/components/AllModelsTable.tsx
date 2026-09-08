@@ -5,6 +5,7 @@ import { Search, Settings } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ModelData } from "@/components/model_dashboard/types";
+import { Team } from "@/components/key_team_helpers/key_list";
 import {
   DataTable,
   DataTableFilterDrawer,
@@ -73,6 +74,7 @@ interface AllModelsTableProps {
   availableModelAccessGroups: string[];
   userRole: string;
   userID: string;
+  teams?: Team[] | null;
   onModelIdClick: (modelId: string) => void;
   onTeamIdClick: (teamId: string) => void;
   onDeleteClick: (modelId: string) => void;
@@ -120,6 +122,7 @@ export function AllModelsTable({
   availableModelAccessGroups,
   userRole,
   userID,
+  teams,
   onModelIdClick,
   onTeamIdClick,
   onDeleteClick,
@@ -132,6 +135,7 @@ export function AllModelsTable({
     const columnDeps = {
       userRole,
       userID,
+      teams,
       onModelIdClick,
       onTeamIdClick,
       onDeleteClick,
@@ -139,7 +143,7 @@ export function AllModelsTable({
       pausingModelId,
     };
     return getModelsTableColumns(columnDeps);
-  }, [userRole, userID, onModelIdClick, onTeamIdClick, onDeleteClick, onTogglePauseClick, pausingModelId]);
+  }, [userRole, userID, teams, onModelIdClick, onTeamIdClick, onDeleteClick, onTogglePauseClick, pausingModelId]);
 
   const modelGroupOptions = useMemo(
     () => [

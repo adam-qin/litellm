@@ -1389,6 +1389,30 @@ def test_ProxyConfig_get_model_info_with_id_returns_router_model_info():
     assert snapshot == {"id": "m-1", "db_model": True, "blocked": False}
 
 
+def test_ProxyConfig_get_model_info_with_id_exposes_created_by_without_premium(monkeypatch):
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr("litellm.proxy.proxy_server.premium_user", False)
+    pc = ProxyConfig()
+    created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    updated_at = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    model = SimpleNamespace(
+        model_id="m-created",
+        model_info={"id": "m-created"},
+        blocked=False,
+        created_at=created_at,
+        updated_at=updated_at,
+        created_by="team-admin-1",
+        updated_by="team-admin-1",
+    )
+    out = pc.get_model_info_with_id(model=model, db_model=True)
+    dumped = out.model_dump()
+    assert dumped.get("created_by") == "team-admin-1"
+    assert dumped.get("updated_by") == "team-admin-1"
+    assert dumped.get("created_at") == created_at
+    assert dumped.get("updated_at") == updated_at
+
+
 def test_ProxyConfig_get_model_info_with_id_missing_model_id_raises(monkeypatch):
     monkeypatch.setattr("litellm.proxy.proxy_server.premium_user", False)
     pc = ProxyConfig()

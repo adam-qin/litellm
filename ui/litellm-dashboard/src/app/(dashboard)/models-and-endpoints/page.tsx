@@ -7,7 +7,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { useTeams } from "@/app/(dashboard)/hooks/teams/useTeams";
 import { useUISettings } from "@/app/(dashboard)/hooks/uiSettings/useUISettings";
-import { all_admin_roles, internalUserRoles, isProxyAdminRole, isUserTeamAdminForAnyTeam } from "@/utils/roles";
+import {
+  all_admin_roles,
+  internalUserRoles,
+  isProxyAdminRole,
+  isUserTeamAdminForAnyTeam,
+  isUserTeamAdminForTeamId,
+} from "@/utils/roles";
 import CostOptimizationFeedbackBanner from "@/components/molecules/cost_optimization_feedback_banner";
 import ModelInfoView from "@/components/model_info_view";
 import TeamInfoView from "@/components/team/TeamInfo";
@@ -120,8 +126,8 @@ export default function ModelsAndEndpointsPage() {
           teamId={teamId}
           onClose={close}
           accessToken={accessToken}
-          is_team_admin={userRole === "Admin"}
-          is_proxy_admin={userRole === "Proxy Admin"}
+          is_team_admin={Boolean(userID && isUserTeamAdminForTeamId(teams, teamId, userID))}
+          is_proxy_admin={Boolean(isProxyAdmin)}
           userModels={allModelsOnProxy}
           editTeam={false}
           onUpdate={invalidateModels}
