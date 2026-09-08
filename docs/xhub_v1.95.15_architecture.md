@@ -490,3 +490,7 @@ router_settings:
 | 同名负载与跨模型 fallback | `images/同名负载与跨模型_fallback.html` | 交互式：同名多供应商负载均衡 vs 跨公开模型名 fallback 对比 |
 | 访问组 / TEAM / KEY 权限分层 | `images/访问组_TEAM_KEY_权限分层.png` | Access Group（白名单）、Team overlay（绑供应商）、Virtual Key（models + 预算/限速）三套控制面 |
 | 全球 Master / Slave 部署 | `images/全球_Master_Slave_部署架构.png` | Master（PG/UI/Sub2API/Prometheus）+ 无状态 Slave + OpenResty 全球选区域部署 |
+| 超时解析优先级 | `images/超时解析优先级.html` | 请求 / 节点 / `request_timeout` / 全局 `timeout=120`；per-attempt 不是链预算 |
+| 全局故障转移与超时叠加 | `images/全局故障转移与超时叠加.html` | 跨公开名 fallback 每跳重开 120s；kwargs timeout 粘住 |
+
+可用性与故障转移详细说明：`xhub_v1.95.29_availability_failover.md`。

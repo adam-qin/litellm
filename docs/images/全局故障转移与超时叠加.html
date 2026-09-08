@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520" width="100%" role="img" aria-labelledby="t-failover d-failover">
+  <title id="t-failover">Global fallback uses the same 120s per hop</title>
+  <desc id="d-failover">Each public model in the fallback chain retries twice at 120 seconds, then the next model starts a fresh 120s clock. Total time is additive, not shared. First hop writes timeout into kwargs so later hops keep it.</desc>
+  <defs>
+    <marker id="arrow-failover" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <text x="40" y="32" font-family="sans-serif" font-size="14" font-weight="500" fill="#3C3489">Screenshot path: simple-shuffle, timeout 120, retries 2</text>
+  <text x="40" y="50" font-family="sans-serif" font-size="12" fill="#534AB7">weighted failover off; cross-name fallbacks only</text>
+  <rect x="40" y="72" width="190" height="88" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="135" y="96" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#3C3489">Model A</text>
+  <text x="135" y="116" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">1 try + 2 retries</text>
+  <text x="135" y="134" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">each hop 120s</text>
+  <text x="135" y="148" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">retry wait 3s</text>
+  <line x1="230" y1="116" x2="268" y2="116" stroke="#534AB7" stroke-width="1.5" fill="none" marker-end="url(#arrow-failover)"/>
+  <rect x="272" y="72" width="136" height="88" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="340" y="104" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#444441">Timeout / fail</text>
+  <text x="340" y="126" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#5F5E5A">then fallbacks</text>
+  <line x1="408" y1="116" x2="446" y2="116" stroke="#534AB7" stroke-width="1.5" fill="none" marker-end="url(#arrow-failover)"/>
+  <rect x="450" y="72" width="190" height="88" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="545" y="96" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#3C3489">Model B</text>
+  <text x="545" y="116" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">fresh 120s clock</text>
+  <text x="545" y="134" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">another 1+2 tries</text>
+  <text x="545" y="148" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#534AB7">same router timeout</text>
+  <rect x="40" y="188" width="600" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="340" y="212" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#0C447C">Same timeout value, not one shared 120s budget</text>
+  <text x="340" y="234" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#185FA5">A then B then C: 120s + 120s + 120s, multiplied by retries</text>
+  <rect x="40" y="272" width="600" height="88" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="340" y="296" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#712B13">Sticky kwargs timeout</text>
+  <text x="340" y="318" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#993C1D">First hop writes timeout into kwargs and later hops keep it</text>
+  <text x="340" y="338" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#993C1D">Fallback model litellm_params.timeout is ignored after hop 1</text>
+  <rect x="40" y="380" width="600" height="112" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="340" y="408" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#633806">Worst case for A then B, both hang</text>
+  <text x="340" y="430" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#854F0B">A: 3 x 120s + 2 x 3s wait = 366s</text>
+  <text x="340" y="448" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#854F0B">B: another 366s. Client waits ~12 min, not 120s</text>
+  <text x="340" y="468" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#854F0B">max_fallbacks default 5 can extend this further</text>
+</svg>
