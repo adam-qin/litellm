@@ -3947,6 +3947,75 @@ class TestAdditionalDropParamsForNonOpenAIProviders:
         assert result.get("custom_param") == "value"
 
 
+class TestCustomOpenAIExtraBodyParams:
+    def test_get_optional_params_puts_client_metadata_in_extra_body(self):
+        from litellm.utils import get_optional_params
+
+        result = get_optional_params(
+            model="gpt-5.6-terra",
+            custom_llm_provider="custom_openai",
+            temperature=0.7,
+            client_metadata={"originator": "codex"},
+        )
+
+        assert "client_metadata" not in result
+        assert result["extra_body"] == {
+            "client_metadata": {"originator": "codex"}
+        }
+        assert result["temperature"] == 0.7
+
+    def test_custom_openai_puts_client_metadata_in_extra_body(self):
+        from litellm.utils import add_provider_specific_params_to_optional_params
+
+        result = add_provider_specific_params_to_optional_params(
+            optional_params={"temperature": 0.7},
+            passed_params={
+                "temperature": 0.7,
+                "client_metadata": {"originator": "codex"},
+            },
+            custom_llm_provider="custom_openai",
+            openai_params=["temperature"],
+        )
+
+        assert "client_metadata" not in result
+        assert result["extra_body"] == {
+            "client_metadata": {"originator": "codex"}
+        }
+        assert result["temperature"] == 0.7
+
+    def test_custom_openai_merges_existing_extra_body(self):
+        from litellm.utils import add_provider_specific_params_to_optional_params
+
+        result = add_provider_specific_params_to_optional_params(
+            optional_params={"extra_body": {"existing_param": "existing_value"}},
+            passed_params={
+                "extra_body": {"request_param": "request_value"},
+                "client_metadata": {"originator": "codex"},
+            },
+            custom_llm_provider="custom_openai",
+            openai_params=[],
+        )
+
+        assert result["extra_body"] == {
+            "existing_param": "existing_value",
+            "request_param": "request_value",
+            "client_metadata": {"originator": "codex"},
+        }
+
+    def test_custom_openai_respects_additional_drop_params(self):
+        from litellm.utils import add_provider_specific_params_to_optional_params
+
+        result = add_provider_specific_params_to_optional_params(
+            optional_params={},
+            passed_params={"client_metadata": {"originator": "codex"}},
+            custom_llm_provider="custom_openai",
+            openai_params=[],
+            additional_drop_params=["client_metadata"],
+        )
+
+        assert result["extra_body"] == {}
+
+
 class TestDropParamsWithPromptCacheKey:
     """
     Test that drop_params: true correctly drops prompt_cache_key for non-OpenAI providers.
