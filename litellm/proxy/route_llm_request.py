@@ -222,8 +222,25 @@ async def _resolve_dashboard_session_team_id(
     resolved_team_id: Optional[str] = None
     model = data.get("model")
     auth = _auth_from_route_data(data, user_api_key_dict)
+
+    # Playground explicitly sends the selected team. Prefer it over model-name
+    # inference, but only after verifying that the dashboard user belongs to it.
+    selected_team_id = None
+    for metadata_key in ("litellm_metadata", "metadata"):
+        metadata = data.get(metadata_key)
+        if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
+            selected_team_id = metadata["team_id"]
+            break
+    if auth is not None and selected_team_id:
+        from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+            resolve_ui_session_team_ids,
+        )
+
+        if selected_team_id in await resolve_ui_session_team_ids(auth):
+            resolved_team_id = selected_team_id
     if (
-        auth is not None
+        resolved_team_id is None
+        and auth is not None
         and isinstance(model, str)
         and model
         and llm_router is not None

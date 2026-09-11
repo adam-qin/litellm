@@ -2550,6 +2550,30 @@ async def user_api_key_auth(
         ## ENSURE DISABLE ROUTE WORKS ACROSS ALL USER AUTH FLOWS ##
         RouteChecks.should_call_route(route=route, valid_token=user_api_key_auth_obj, request=request)
 
+        # A dashboard session key carries a sentinel team id. Playground sends
+        # the selected real team in request metadata; resolve it before the
+        # centralized checks so team budgets/model ACLs use that team context.
+        selected_team_id = None
+        for metadata_key in ("litellm_metadata", "metadata"):
+            metadata = request_data.get(metadata_key)
+            if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
+                selected_team_id = metadata["team_id"]
+                break
+        if selected_team_id:
+            from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+                resolve_selected_ui_session_team_auth,
+            )
+
+            resolved_auth = await resolve_selected_ui_session_team_auth(
+                user_api_key_auth_obj, selected_team_id
+            )
+            if resolved_auth is not user_api_key_auth_obj:
+                # The dashboard session key is not a real virtual key. Its
+                # placeholder allowlist must not shadow the selected team's
+                # model permissions; common_checks enforces team ACLs below.
+                resolved_auth.models = []
+                user_api_key_auth_obj = resolved_auth
+
         # Single authorization point. Builder paths MUST NOT call common_checks.
         # Route through the same exception handler the builder uses so
         # authorization failures (ProxyException, or plain Exception from
@@ -2798,13 +2822,36 @@ async def _enforce_key_and_fallback_model_access(
     Key-level model allowlist and client fallbacks (same as standard auth).
     Not included in common_checks — common_checks enforces team/user/project model access only.
     """
-    config = valid_token.config
+    # Dashboard Playground sends the selected team in litellm_metadata. Resolve
+    # the UI session token before key-level model checks so team-bound models do
+    # not get rejected by the sentinel session key's placeholder allowlist.
+    effective_token = valid_token
+    selected_team_id = None
+    for metadata_key in ("litellm_metadata", "metadata"):
+        metadata = request_data.get(metadata_key)
+        if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
+            selected_team_id = metadata["team_id"]
+            break
+    if selected_team_id:
+        from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+            resolve_selected_ui_session_team_auth,
+        )
+
+        effective_token = await resolve_selected_ui_session_team_auth(
+            valid_token, selected_team_id
+        )
+        if effective_token is not valid_token:
+            # Team authorization is enforced by common_checks later. The UI
+            # session's placeholder key allowlist must not shadow that check.
+            effective_token.models = []
+
+    config = effective_token.config
 
     if config != {}:
         model_list = config.get("model_list", [])
         new_model_list = model_list
         verbose_proxy_logger.debug(f"\n new llm router model list {new_model_list}")
-    elif isinstance(valid_token.models, list) and "all-team-models" in valid_token.models:
+    elif isinstance(effective_token.models, list) and "all-team-models" in effective_token.models:
         pass
     else:
         model = _get_model_from_request_context(
@@ -2818,7 +2865,7 @@ async def _enforce_key_and_fallback_model_access(
             await can_key_call_model(
                 model=model,
                 llm_model_list=llm_model_list,
-                valid_token=valid_token,
+                valid_token=effective_token,
                 llm_router=llm_router,
             )
 
@@ -2832,7 +2879,7 @@ async def _enforce_key_and_fallback_model_access(
             await can_key_call_model(
                 model=_name,
                 llm_model_list=llm_model_list,
-                valid_token=valid_token,
+                valid_token=effective_token,
                 llm_router=llm_router,
             )
             await is_valid_fallback_model(

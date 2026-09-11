@@ -38,6 +38,7 @@ export async function makeOpenAIResponsesRequest(
   mcpServers?: MCPServer[],
   mcpServerToolRestrictions?: Record<string, string[]>,
   mcpToolsets?: MCPToolset[],
+  teamId?: string,
 ) {
   if (!accessToken) {
     throw new Error("Virtual Key is required");
@@ -156,6 +157,7 @@ export async function makeOpenAIResponsesRequest(
         ...(guardrails ? { guardrails } : {}),
         ...(policies ? { policies } : {}),
         ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
+        ...(teamId ? { litellm_metadata: { team_id: teamId } } : {}),
       },
       { signal },
     );

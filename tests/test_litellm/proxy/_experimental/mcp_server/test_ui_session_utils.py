@@ -10,6 +10,7 @@ from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy._experimental.mcp_server.ui_session_utils import (
     build_effective_auth_contexts,
     clone_user_api_key_auth_with_team,
+    resolve_selected_ui_session_team_auth,
     resolve_ui_session_team_ids,
 )
 
@@ -58,6 +59,38 @@ async def test_resolve_ui_session_team_ids_short_circuits_when_not_ui_session():
     result = await resolve_ui_session_team_ids(normal_user)
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_selected_ui_session_team_auth_only_allows_member_team(monkeypatch):
+    user_auth = UserAPIKeyAuth(team_id=UI_SESSION_TOKEN_TEAM_ID, user_id="user-selected")
+    resolver = AsyncMock(return_value=["team-a", "team-b"])
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        resolver,
+    )
+
+    selected = await resolve_selected_ui_session_team_auth(user_auth, "team-b")
+    rejected = await resolve_selected_ui_session_team_auth(user_auth, "team-outsider")
+
+    assert selected.team_id == "team-b"
+    assert selected is not user_auth
+    assert rejected is user_auth
+
+
+@pytest.mark.asyncio
+async def test_resolve_selected_ui_session_team_auth_does_not_override_regular_key(monkeypatch):
+    user_auth = UserAPIKeyAuth(team_id="regular-team", user_id="user-selected")
+    resolver = AsyncMock(return_value=["team-other"])
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        resolver,
+    )
+
+    result = await resolve_selected_ui_session_team_auth(user_auth, "team-other")
+
+    assert result is user_auth
+    resolver.assert_not_awaited()
 
 
 @pytest.mark.asyncio

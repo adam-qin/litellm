@@ -6,9 +6,13 @@ import pytest
 sys.path.insert(0, os.path.abspath("../../.."))  # Adds the parent directory to the system path
 
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from litellm.proxy.route_llm_request import ProxyModelNotFoundError, route_request
+from litellm.proxy.route_llm_request import (
+    ProxyModelNotFoundError,
+    _resolve_dashboard_session_team_id,
+    route_request,
+)
 
 
 @pytest.mark.parametrize(
@@ -235,6 +239,39 @@ async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_wi
     )
 
     assert {deployment["model_info"]["id"] for deployment in collision_deployments} == {"global-team-azure"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_dashboard_session_prefers_selected_member_team(monkeypatch):
+    from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
+    from litellm.proxy._types import UserAPIKeyAuth
+
+    auth = UserAPIKeyAuth(
+        user_id="user-selected",
+        team_id=UI_SESSION_TOKEN_TEAM_ID,
+    )
+    resolver = AsyncMock(return_value=["team-a", "team-b"])
+    monkeypatch.setattr(
+        "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_ui_session_team_ids",
+        resolver,
+    )
+
+    data = {
+        "model": "team-model",
+        "litellm_metadata": {
+            "team_id": "team-b",
+            "user_api_key_team_id": UI_SESSION_TOKEN_TEAM_ID,
+        },
+    }
+    result = await _resolve_dashboard_session_team_id(
+        data=data,
+        llm_router=None,
+        team_id=UI_SESSION_TOKEN_TEAM_ID,
+        user_api_key_dict=auth,
+    )
+
+    assert result == "team-b"
+    assert data["litellm_metadata"]["user_api_key_team_id"] == "team-b"
 
 
 @pytest.mark.asyncio

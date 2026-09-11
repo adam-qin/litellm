@@ -256,4 +256,38 @@ describe("chat_completion", () => {
     const callArgs = mockCreate.mock.calls[0][0];
     expect(callArgs).not.toHaveProperty("mock_testing_fallbacks");
   });
+
+  it("should include selected team context in litellm_metadata", async () => {
+    await makeOpenAIChatCompletionRequest(
+      mockChatHistory,
+      mockUpdateUI,
+      "gpt-4",
+      "test-token",
+      undefined, // tags
+      undefined, // signal
+      undefined, // onReasoningContent
+      undefined, // onTimingData
+      undefined, // onUsageData
+      undefined, // traceId
+      undefined, // vector_store_ids
+      undefined, // guardrails
+      undefined, // policies
+      undefined, // selectedMCPServers
+      undefined, // onImageGenerated
+      undefined, // onSearchResults
+      undefined, // temperature
+      undefined, // max_tokens
+      undefined, // onTotalLatency
+      undefined, // customBaseUrl
+      undefined, // mcpServers
+      undefined, // mcpServerToolRestrictions
+      undefined, // onMCPEvent
+      undefined, // mockTestFallbacks
+      undefined, // mcpToolsets
+      "team-dw",
+    );
+
+    const callArgs = mockCreate.mock.calls[0][0];
+    expect(callArgs.litellm_metadata).toEqual({ team_id: "team-dw" });
+  });
 });

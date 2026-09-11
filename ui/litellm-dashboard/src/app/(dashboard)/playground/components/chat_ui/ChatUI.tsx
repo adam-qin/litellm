@@ -38,6 +38,7 @@ import { callMCPTool, fetchMCPServers, fetchMCPToolsets, listMCPTools } from "@/
 import { MCPToolset } from "@/components/mcp_tools/types";
 import TagSelector from "@/components/tag_management/TagSelector";
 import VectorStoreSelector from "@/components/vector_store_management/VectorStoreSelector";
+import TeamDropdown from "@/components/common_components/team_dropdown";
 import { makeA2ASendMessageRequest } from "../../llm_calls/a2a_send_message";
 import { makeAnthropicMessagesRequest } from "../../llm_calls/anthropic_messages";
 import { makeOpenAIAudioSpeechRequest } from "../../llm_calls/audio_speech";
@@ -189,6 +190,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
   );
   const [inputMessage, setInputMessage] = useState("");
   const [selectedModel, setSelectedModel] = useState<string | undefined>(simplified ? fixedModel : undefined);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(() => sessionStorage.getItem("playgroundSelectedTeamId") || "");
   const [showCustomModelInput, setShowCustomModelInput] = useState<boolean>(false);
   const [modelInfo, setModelInfo] = useState<ModelGroup[]>([]);
   const [agentInfo, setAgentInfo] = useState<Agent[]>([]);
@@ -771,6 +773,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             handleMCPEvent,
             mockTestFallbacks,
             mcpToolsets,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.IMAGE) {
           // For image generation
@@ -852,6 +855,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             mcpServers,
             mcpServerToolRestrictions,
             mcpToolsets,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.ANTHROPIC_MESSAGES) {
           const apiChatHistory = [
@@ -1176,6 +1180,28 @@ const ChatUI: React.FC<ChatUIProps> = ({
                     onToggleSessionManagement={handleToggleSessionManagement}
                   />
                 </div>
+
+                {!simplified && (
+                  <div>
+                    <Text className="font-medium block mb-2 text-gray-700 flex items-center">
+                      <UserOutlined className="mr-2" /> Team Context
+                    </Text>
+                    <TeamDropdown
+                      value={selectedTeamId || undefined}
+                      onChange={(teamId) => {
+                        setSelectedTeamId(teamId);
+                        if (teamId) {
+                          sessionStorage.setItem("playgroundSelectedTeamId", teamId);
+                        } else {
+                          sessionStorage.removeItem("playgroundSelectedTeamId");
+                        }
+                      }}
+                    />
+                    <Text className="text-xs text-gray-500 mt-1 block">
+                      Requests use the selected team's model permissions and routing.
+                    </Text>
+                  </div>
+                )}
 
                 {/* Model Selector - shown when NOT using A2A Agents or MCP direct mode */}
                 {endpointType !== EndpointType.A2A_AGENTS && endpointType !== EndpointType.MCP && (

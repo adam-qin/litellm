@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from litellm._logging import verbose_logger
 from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
@@ -66,6 +66,27 @@ async def resolve_ui_session_team_ids(
         if team_id and team_id not in resolved_team_ids:
             resolved_team_ids.append(team_id)
     return resolved_team_ids
+
+
+async def resolve_selected_ui_session_team_auth(
+    user_api_key_auth: UserAPIKeyAuth,
+    selected_team_id: Optional[str],
+) -> UserAPIKeyAuth:
+    """Resolve a UI session token to an explicitly selected member team.
+
+    A caller-supplied team id is trusted only when the authenticated dashboard
+    user is a member of that team. Non-UI keys and invalid selections keep their
+    original auth context.
+    """
+
+    if not selected_team_id or user_api_key_auth.team_id != UI_SESSION_TOKEN_TEAM_ID:
+        return user_api_key_auth
+
+    resolved_team_ids = await resolve_ui_session_team_ids(user_api_key_auth)
+    if selected_team_id not in resolved_team_ids:
+        return user_api_key_auth
+
+    return clone_user_api_key_auth_with_team(user_api_key_auth, selected_team_id)
 
 
 async def build_effective_auth_contexts(

@@ -16,6 +16,22 @@ vi.mock("@/components/networking", () => ({
   modelHubCall: vi.fn().mockResolvedValue({ data: [] }),
 }));
 
+vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
+  useInfiniteTeams: () => ({
+    data: {
+      pages: [
+        {
+          teams: [{ team_id: "team-dw", team_alias: "DW Team" }],
+        },
+      ],
+    },
+    fetchNextPage: vi.fn(),
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    isLoading: false,
+  }),
+}));
+
 // Mock scrollIntoView which is not available in jsdom
 beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};

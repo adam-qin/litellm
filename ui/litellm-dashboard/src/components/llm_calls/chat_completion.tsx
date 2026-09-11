@@ -31,6 +31,7 @@ export async function makeOpenAIChatCompletionRequest(
   onMCPEvent?: (event: MCPEvent) => void,
   mockTestFallbacks?: boolean,
   mcpToolsets?: MCPToolset[],
+  teamId?: string,
 ) {
   // base url should be the current base_url
   const isLocal = process.env.NODE_ENV === "development";
@@ -128,6 +129,7 @@ export async function makeOpenAIChatCompletionRequest(
         ...(temperature !== undefined ? { temperature } : {}),
         ...(max_tokens !== undefined ? { max_tokens } : {}),
         ...(mockTestFallbacks ? { mock_testing_fallbacks: true } : {}),
+        ...(teamId ? { litellm_metadata: { team_id: teamId } } : {}),
       },
       { signal },
     );
