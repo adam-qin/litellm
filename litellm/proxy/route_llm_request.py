@@ -225,12 +225,11 @@ async def _resolve_dashboard_session_team_id(
 
     # Playground explicitly sends the selected team. Prefer it over model-name
     # inference, but only after verifying that the dashboard user belongs to it.
-    selected_team_id = None
-    for metadata_key in ("litellm_metadata", "metadata"):
-        metadata = data.get(metadata_key)
-        if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
-            selected_team_id = metadata["team_id"]
-            break
+    from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+        get_selected_team_id_from_request_data,
+    )
+
+    selected_team_id = get_selected_team_id_from_request_data(data)
     if auth is not None and selected_team_id:
         from litellm.proxy._experimental.mcp_server.ui_session_utils import (
             resolve_ui_session_team_ids,

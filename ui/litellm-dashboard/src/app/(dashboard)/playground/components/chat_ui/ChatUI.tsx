@@ -34,7 +34,7 @@ import MCPToolArgumentsForm, { MCPToolArgumentsFormRef } from "@/components/mcp_
 import { MCPServer } from "@/components/mcp_tools/types";
 import { ByokCredentialModal } from "@/components/mcp_tools/ByokCredentialModal";
 import NotificationsManager from "@/components/molecules/notifications_manager";
-import { callMCPTool, fetchMCPServers, fetchMCPToolsets, listMCPTools } from "@/components/networking";
+import { callMCPTool, fetchMCPServers, fetchMCPToolsets, listMCPTools, teamInfoCall } from "@/components/networking";
 import { MCPToolset } from "@/components/mcp_tools/types";
 import TagSelector from "@/components/tag_management/TagSelector";
 import VectorStoreSelector from "@/components/vector_store_management/VectorStoreSelector";
@@ -190,7 +190,9 @@ const ChatUI: React.FC<ChatUIProps> = ({
   );
   const [inputMessage, setInputMessage] = useState("");
   const [selectedModel, setSelectedModel] = useState<string | undefined>(simplified ? fixedModel : undefined);
-  const [selectedTeamId, setSelectedTeamId] = useState<string>(() => sessionStorage.getItem("playgroundSelectedTeamId") || "");
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(() =>
+    simplified ? "" : sessionStorage.getItem("playgroundSelectedTeamId") || "",
+  );
   const [showCustomModelInput, setShowCustomModelInput] = useState<boolean>(false);
   const [modelInfo, setModelInfo] = useState<ModelGroup[]>([]);
   const [agentInfo, setAgentInfo] = useState<Agent[]>([]);
@@ -288,6 +290,23 @@ const ChatUI: React.FC<ChatUIProps> = ({
       setIsLoadingMCPServers(false);
     }
   };
+
+  // A persisted selection can outlive the user's membership. Validate it with
+  // the exact team endpoint instead of the paginated dropdown result.
+  useEffect(() => {
+    if (!selectedTeamId || !accessToken || simplified) return;
+
+    let cancelled = false;
+    teamInfoCall(accessToken, selectedTeamId).catch(() => {
+      if (!cancelled) {
+        setSelectedTeamId("");
+        sessionStorage.removeItem("playgroundSelectedTeamId");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, selectedTeamId, simplified]);
 
   // When simplified, keep selectedModel and endpointType in sync with fixedModel / chat-only
   useEffect(() => {
@@ -785,6 +804,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             selectedTags,
             signal,
             customProxyBaseUrl || undefined,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.SPEECH) {
           // For audio speech
@@ -799,6 +819,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             undefined, // responseFormat
             undefined, // speed
             customProxyBaseUrl || undefined,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.IMAGE_EDITS) {
           // For image edits
@@ -812,6 +833,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
               selectedTags,
               signal,
               customProxyBaseUrl || undefined,
+              selectedTeamId || undefined,
             );
           }
         } else if (endpointType === EndpointType.RESPONSES) {
@@ -884,6 +906,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             mcpServers,
             mcpServerToolRestrictions,
             mcpToolsets,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.EMBEDDINGS) {
           await makeOpenAIEmbeddingsRequest(
@@ -893,6 +916,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
             effectiveApiKey,
             selectedTags,
             customProxyBaseUrl || undefined,
+            selectedTeamId || undefined,
           );
         } else if (endpointType === EndpointType.TRANSCRIPTION) {
           // For audio transcriptions
@@ -909,6 +933,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
               undefined, // responseFormat
               undefined, // temperature
               customProxyBaseUrl || undefined,
+              selectedTeamId || undefined,
             );
           }
         } else if (endpointType === EndpointType.INTERACTIONS) {
@@ -920,6 +945,8 @@ const ChatUI: React.FC<ChatUIProps> = ({
             selectedTags,
             signal,
             customProxyBaseUrl || undefined,
+            undefined, // previousInteractionId
+            selectedTeamId || undefined,
           );
         }
       }
@@ -1198,7 +1225,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
                       }}
                     />
                     <Text className="text-xs text-gray-500 mt-1 block">
-                      Requests use the selected team's model permissions and routing.
+                      Requests use the selected team&apos;s model permissions and routing.
                     </Text>
                   </div>
                 )}

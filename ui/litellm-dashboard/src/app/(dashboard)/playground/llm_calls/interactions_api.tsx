@@ -10,6 +10,8 @@ export async function makeInteractionsRequest(
   signal?: AbortSignal,
   customBaseUrl?: string,
   previousInteractionId?: string,
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ): Promise<void> {
   if (!accessToken) {
     throw new Error("Virtual Key is required");
@@ -36,6 +38,9 @@ export async function makeInteractionsRequest(
     model: selectedModel,
     input,
     stream: true,
+    ...(litellmMetadata || teamId
+      ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+      : {}),
   };
   if (previousInteractionId) {
     body.previous_interaction_id = previousInteractionId;

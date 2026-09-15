@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ChatUI from "./ChatUI";
 import * as fetchModelsModule from "@/components/llm_calls/fetch_models";
+import { teamInfoCall } from "@/components/networking";
 
 // Mock the fetchAvailableModels function
 vi.mock("@/components/llm_calls/fetch_models", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/components/networking", () => ({
   vectorStoreListCall: vi.fn().mockResolvedValue({ data: [] }),
   getGuardrailsList: vi.fn().mockResolvedValue({ data: [] }),
   modelHubCall: vi.fn().mockResolvedValue({ data: [] }),
+  teamInfoCall: vi.fn().mockResolvedValue({ team_id: "team-dw" }),
 }));
 
 vi.mock("@/app/(dashboard)/hooks/teams/useTeams", () => ({
@@ -52,6 +54,25 @@ describe("ChatUI", () => {
       { model_group: "Model 2", mode: "chat" },
       { model_group: "Model 3", mode: "chat" },
     ]);
+  });
+
+  it("should clear a persisted team that is no longer accessible", async () => {
+    sessionStorage.setItem("playgroundSelectedTeamId", "team-removed");
+    vi.mocked(teamInfoCall).mockRejectedValueOnce(new Error("not found"));
+
+    render(
+      <ChatUI
+        accessToken="1234567890"
+        token="1234567890"
+        userRole="user"
+        userID="1234567890"
+        disabledPersonalKeyCreation={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem("playgroundSelectedTeamId")).toBeNull();
+    });
   });
 
   it("should render the chat UI", async () => {

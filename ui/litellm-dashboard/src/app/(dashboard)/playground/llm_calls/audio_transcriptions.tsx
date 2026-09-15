@@ -14,6 +14,8 @@ export async function makeOpenAIAudioTranscriptionRequest(
   responseFormat?: string,
   temperature?: number,
   customBaseUrl?: string,
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ) {
   // base url should be the current base_url
   const isLocal = process.env.NODE_ENV === "development";
@@ -38,7 +40,10 @@ export async function makeOpenAIAudioTranscriptionRequest(
         ...(prompt ? { prompt: prompt } : {}),
         ...(responseFormat ? { response_format: responseFormat as any } : {}),
         ...(temperature !== undefined ? { temperature: temperature } : {}),
-      },
+        ...(litellmMetadata || teamId
+          ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+          : {}),
+      } as any,
       { signal },
     );
 

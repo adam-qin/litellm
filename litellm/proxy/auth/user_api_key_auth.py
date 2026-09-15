@@ -2553,16 +2553,13 @@ async def user_api_key_auth(
         # A dashboard session key carries a sentinel team id. Playground sends
         # the selected real team in request metadata; resolve it before the
         # centralized checks so team budgets/model ACLs use that team context.
-        selected_team_id = None
-        for metadata_key in ("litellm_metadata", "metadata"):
-            metadata = request_data.get(metadata_key)
-            if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
-                selected_team_id = metadata["team_id"]
-                break
+        from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+            get_selected_team_id_from_request_data,
+            resolve_selected_ui_session_team_auth,
+        )
+
+        selected_team_id = get_selected_team_id_from_request_data(request_data)
         if selected_team_id:
-            from litellm.proxy._experimental.mcp_server.ui_session_utils import (
-                resolve_selected_ui_session_team_auth,
-            )
 
             resolved_auth = await resolve_selected_ui_session_team_auth(
                 user_api_key_auth_obj, selected_team_id
@@ -2825,17 +2822,14 @@ async def _enforce_key_and_fallback_model_access(
     # Dashboard Playground sends the selected team in litellm_metadata. Resolve
     # the UI session token before key-level model checks so team-bound models do
     # not get rejected by the sentinel session key's placeholder allowlist.
+    from litellm.proxy._experimental.mcp_server.ui_session_utils import (
+        get_selected_team_id_from_request_data,
+        resolve_selected_ui_session_team_auth,
+    )
+
     effective_token = valid_token
-    selected_team_id = None
-    for metadata_key in ("litellm_metadata", "metadata"):
-        metadata = request_data.get(metadata_key)
-        if isinstance(metadata, dict) and isinstance(metadata.get("team_id"), str):
-            selected_team_id = metadata["team_id"]
-            break
+    selected_team_id = get_selected_team_id_from_request_data(request_data)
     if selected_team_id:
-        from litellm.proxy._experimental.mcp_server.ui_session_utils import (
-            resolve_selected_ui_session_team_auth,
-        )
 
         effective_token = await resolve_selected_ui_session_team_auth(
             valid_token, selected_team_id

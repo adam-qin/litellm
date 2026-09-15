@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from litellm._logging import verbose_logger
 from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
 from litellm.proxy._types import UserAPIKeyAuth
+
+
+def get_selected_team_id_from_request_data(request_data: Dict[str, Any]) -> Optional[str]:
+    """Return an explicitly selected team id from supported request metadata."""
+
+    for metadata_key in ("litellm_metadata", "metadata"):
+        metadata = request_data.get(metadata_key)
+        if isinstance(metadata, dict):
+            team_id = metadata.get("team_id")
+            if isinstance(team_id, str) and team_id:
+                return team_id
+    return None
 
 
 def clone_user_api_key_auth_with_team(
@@ -86,7 +98,63 @@ async def resolve_selected_ui_session_team_auth(
     if selected_team_id not in resolved_team_ids:
         return user_api_key_auth
 
-    return clone_user_api_key_auth_with_team(user_api_key_auth, selected_team_id)
+    from litellm.proxy.auth.auth_checks import get_team_membership, get_team_object
+    from litellm.proxy.proxy_server import (
+        prisma_client,
+        proxy_logging_obj,
+        user_api_key_cache,
+    )
+
+    if prisma_client is None or not user_api_key_auth.user_id:
+        return user_api_key_auth
+
+    try:
+        team_object = await get_team_object(
+            team_id=selected_team_id,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            parent_otel_span=user_api_key_auth.parent_otel_span,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+        team_membership = await get_team_membership(
+            user_id=user_api_key_auth.user_id,
+            team_id=selected_team_id,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            parent_otel_span=user_api_key_auth.parent_otel_span,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        verbose_logger.warning(
+            "Failed to hydrate selected team context for UI session token.",
+            exc,
+        )
+        return user_api_key_auth
+
+    if team_object is None or team_membership is None:
+        return user_api_key_auth
+
+    cloned_auth = clone_user_api_key_auth_with_team(user_api_key_auth, selected_team_id)
+    cloned_auth.team_alias = team_object.team_alias
+    cloned_auth.team_spend = team_object.spend
+    cloned_auth.team_tpm_limit = team_object.tpm_limit
+    cloned_auth.team_rpm_limit = team_object.rpm_limit
+    cloned_auth.team_max_budget = team_object.max_budget
+    cloned_auth.team_soft_budget = team_object.soft_budget
+    cloned_auth.team_models = list(team_object.models or [])
+    cloned_auth.team_blocked = team_object.blocked
+    cloned_auth.team_metadata = team_object.metadata
+    cloned_auth.team_object_permission_id = team_object.object_permission_id
+    cloned_auth.team_object_permission = team_object.object_permission
+    cloned_auth.team_member = team_membership
+    cloned_auth.team_member_spend = team_membership.spend
+    cloned_auth.team_member_rpm_limit = team_membership.safe_get_team_member_rpm_limit()
+    cloned_auth.team_member_tpm_limit = team_membership.safe_get_team_member_tpm_limit()
+
+    model_table = team_object.litellm_model_table
+    model_aliases = getattr(model_table, "model_aliases", None) if model_table is not None else None
+    cloned_auth.team_model_aliases = model_aliases if isinstance(model_aliases, dict) else None
+    return cloned_auth
 
 
 async def build_effective_auth_contexts(

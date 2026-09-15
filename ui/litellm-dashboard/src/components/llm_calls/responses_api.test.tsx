@@ -69,6 +69,42 @@ describe("responses_api", () => {
     expect(mockUpdateTextUI).toHaveBeenCalledWith("assistant", "Hi", "gpt-4");
   });
 
+  it("should merge selected team context with existing litellm metadata", async () => {
+    await makeOpenAIResponsesRequest(
+      messages,
+      mockUpdateTextUI,
+      "gpt-4",
+      "test-token",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "team-dw",
+      { audit_source: "playground", team_id: "stale-team" },
+    );
+
+    const callArgs = mockResponsesCreate.mock.calls[0][0];
+    expect(callArgs.litellm_metadata).toEqual({
+      audit_source: "playground",
+      team_id: "team-dw",
+    });
+  });
+
   it("should configure MCP tools per server with restrictions", async () => {
     const selectedMCPServers = ["server-1", "server-2"];
     const mcpServers = [

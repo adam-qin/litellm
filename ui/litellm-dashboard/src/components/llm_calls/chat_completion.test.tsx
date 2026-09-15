@@ -285,9 +285,10 @@ describe("chat_completion", () => {
       undefined, // mockTestFallbacks
       undefined, // mcpToolsets
       "team-dw",
+      { audit_source: "playground", team_id: "stale-team" },
     );
 
     const callArgs = mockCreate.mock.calls[0][0];
-    expect(callArgs.litellm_metadata).toEqual({ team_id: "team-dw" });
+    expect(callArgs.litellm_metadata).toEqual({ audit_source: "playground", team_id: "team-dw" });
   });
 });

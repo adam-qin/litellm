@@ -25,6 +25,8 @@ export async function makeAnthropicMessagesRequest(
   mcpServers?: MCPServer[],
   mcpServerToolRestrictions?: Record<string, string[]>,
   mcpToolsets?: MCPToolset[],
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ) {
   if (!accessToken) {
     throw new Error("Virtual Key is required");
@@ -61,6 +63,9 @@ export async function makeAnthropicMessagesRequest(
       max_tokens: 1024,
       // @ts-ignore - litellm specific parameter
       litellm_trace_id: traceId,
+      ...(litellmMetadata || teamId
+        ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+        : {}),
     };
 
     const tools = buildMcpToolBlocks({

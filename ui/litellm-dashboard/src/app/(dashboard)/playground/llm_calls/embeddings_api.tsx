@@ -8,6 +8,8 @@ export async function makeOpenAIEmbeddingsRequest(
   accessToken: string,
   tags?: string[],
   customBaseUrl?: string,
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ) {
   if (!accessToken) {
     throw new Error("Virtual Key is required");
@@ -40,6 +42,9 @@ export async function makeOpenAIEmbeddingsRequest(
       body: JSON.stringify({
         model: selectedModel,
         input,
+        ...(litellmMetadata || teamId
+          ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+          : {}),
       }),
     });
 

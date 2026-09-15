@@ -14,6 +14,8 @@ export async function makeOpenAIAudioSpeechRequest(
   responseFormat?: string,
   speed?: number,
   customBaseUrl?: string,
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ) {
   // base url should be the current base_url
   const isLocal = process.env.NODE_ENV === "development";
@@ -36,7 +38,10 @@ export async function makeOpenAIAudioSpeechRequest(
         voice,
         ...(responseFormat ? { response_format: responseFormat as any } : {}),
         ...(speed ? { speed: speed } : {}),
-      },
+        ...(litellmMetadata || teamId
+          ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+          : {}),
+      } as any,
       { signal },
     );
 

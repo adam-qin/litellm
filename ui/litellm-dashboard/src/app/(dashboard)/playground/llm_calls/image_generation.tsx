@@ -10,6 +10,8 @@ export async function makeOpenAIImageGenerationRequest(
   tags?: string[],
   signal?: AbortSignal,
   customBaseUrl?: string,
+  teamId?: string,
+  litellmMetadata?: Record<string, unknown>,
 ) {
   // base url should be the current base_url
   const isLocal = process.env.NODE_ENV === "development";
@@ -29,7 +31,10 @@ export async function makeOpenAIImageGenerationRequest(
       {
         model: selectedModel,
         prompt: prompt,
-      },
+        ...(litellmMetadata || teamId
+          ? { litellm_metadata: { ...litellmMetadata, ...(teamId ? { team_id: teamId } : {}) } }
+          : {}),
+      } as any,
       { signal },
     );
 

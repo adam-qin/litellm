@@ -4067,6 +4067,78 @@ async def test_user_api_key_auth_sets_end_user_id_when_builder_skips_it():
 
 
 @pytest.mark.asyncio
+async def test_user_api_key_auth_passes_hydrated_selected_team_to_common_checks():
+    from fastapi import Request
+    from starlette.datastructures import URL
+
+    import litellm.proxy.proxy_server as _proxy_server_mod
+    from litellm.constants import UI_SESSION_TOKEN_TEAM_ID
+
+    builder_token = UserAPIKeyAuth(
+        api_key="sk-test",
+        user_id="u1",
+        team_id=UI_SESSION_TOKEN_TEAM_ID,
+    )
+    selected_auth = builder_token.model_copy()
+    selected_auth.team_id = "team-selected"
+    selected_auth.team_tpm_limit = 1000
+    selected_auth.team_rpm_limit = 20
+    selected_auth.team_models = ["team-model"]
+
+    request = Request(
+        scope={
+            "type": "http",
+            "headers": [(b"content-type", b"application/json")],
+            "method": "POST",
+        }
+    )
+    request._url = URL(url="/chat/completions")
+    request._body = json.dumps(
+        {
+            "model": "team-model",
+            "litellm_metadata": {"team_id": "team-selected"},
+        }
+    ).encode()
+
+    attrs = _proxy_attrs_for_centralized_checks(user_custom_auth=None)
+    originals = {a: getattr(_proxy_server_mod, a, None) for a in attrs}
+    try:
+        for key, value in attrs.items():
+            setattr(_proxy_server_mod, key, value)
+        with (
+            patch(
+                "litellm.proxy.auth.user_api_key_auth._user_api_key_auth_builder",
+                new_callable=AsyncMock,
+                return_value=builder_token,
+            ),
+            patch(
+                "litellm.proxy._experimental.mcp_server.ui_session_utils.resolve_selected_ui_session_team_auth",
+                new_callable=AsyncMock,
+                return_value=selected_auth,
+            ) as mock_resolve,
+            patch(
+                "litellm.proxy.auth.user_api_key_auth._run_centralized_common_checks",
+                new_callable=AsyncMock,
+            ) as mock_common_checks,
+            patch(
+                "litellm.proxy.auth.user_api_key_auth.RouteChecks.should_call_route",
+            ),
+        ):
+            result = await user_api_key_auth(request=request, api_key="Bearer sk-test")
+
+        assert result.team_id == "team-selected"
+        assert result.team_tpm_limit == 1000
+        assert result.team_rpm_limit == 20
+        mock_resolve.assert_awaited_once_with(builder_token, "team-selected")
+        checked_auth = mock_common_checks.await_args.kwargs["user_api_key_auth_obj"]
+        assert checked_auth.team_id == "team-selected"
+        assert checked_auth.team_models == ["team-model"]
+    finally:
+        for key, value in originals.items():
+            setattr(_proxy_server_mod, key, value)
+
+
+@pytest.mark.asyncio
 async def test_user_api_key_auth_does_not_overwrite_end_user_id_set_by_builder():
     """When the builder already resolved the end-user id (the primary
     path), the wrapper-level safety net must not run a second resolution
