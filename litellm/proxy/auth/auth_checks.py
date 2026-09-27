@@ -3036,6 +3036,46 @@ def _resolve_key_models_for_auth_check(valid_token: UserAPIKeyAuth) -> List[str]
     return models
 
 
+def _router_deployments_for_scope_check(
+    model: Union[str, List[str]],
+    llm_router: Optional[Router],
+) -> List[Dict[str, Any]]:
+    if llm_router is None:
+        return []
+    model_names = model if isinstance(model, list) else [model]
+    deployments: List[Dict[str, Any]] = []
+    for model_name in model_names:
+        deployments.extend(llm_router.get_model_list(model_name=model_name) or [])
+    return deployments
+
+
+def _enforce_team_model_scope(
+    model: Union[str, List[str]],
+    team_object: Optional[LiteLLM_TeamTable],
+    llm_router: Optional[Router],
+) -> None:
+    """Apply XHub ownership scope before allowlists or access groups."""
+    from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
+
+    deployments = _router_deployments_for_scope_check(model=model, llm_router=llm_router)
+    scoped_deployments = [
+        deployment for deployment in deployments if get_model_scope(deployment.get("model_info", {})) is not None
+    ]
+    if not scoped_deployments:
+        return
+    if team_object is not None and any(
+        team_can_use_model_info(deployment.get("model_info", {}), team_object)
+        for deployment in scoped_deployments
+    ):
+        return
+    raise ProxyException(
+        message="Team is outside the model ownership scope.",
+        type=ProxyErrorTypes.team_model_access_denied,
+        param="model",
+        code=status.HTTP_403_FORBIDDEN,
+    )
+
+
 async def can_key_call_model(
     model: Union[str, List[str]],
     llm_model_list: Optional[list],
@@ -3129,6 +3169,12 @@ async def can_key_call_resolved_model(
                 object_permission=valid_token.team_object_permission,
             )
 
+    _enforce_team_model_scope(
+        model=model,
+        team_object=team_object,
+        llm_router=llm_router,
+    )
+
     if team_object is not None:
         try:
             await can_team_access_model(
@@ -3202,9 +3248,15 @@ async def can_team_access_model(
     """
     Returns True if the team can access a specific model.
 
-    1. First checks native team-level model permissions (current implementation)
-    2. If not allowed natively, falls back to access_group_ids on the team
+    1. Enforces immutable XHub ownership scope.
+    2. Checks native team-level model permissions.
+    3. If not allowed natively, falls back to access_group_ids on the team.
     """
+    _enforce_team_model_scope(
+        model=model,
+        team_object=team_object,
+        llm_router=llm_router,
+    )
     try:
         return _can_object_call_model(
             model=model,

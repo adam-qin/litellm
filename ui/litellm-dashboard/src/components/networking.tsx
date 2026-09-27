@@ -1570,6 +1570,7 @@ export const modelInfoCall = async (
   teamId?: string,
   sortBy?: string,
   sortOrder?: string,
+  personalOnly?: boolean,
 ) => {
   /**
    * Get all models on proxy
@@ -1588,6 +1589,9 @@ export const modelInfoCall = async (
     }
     if (teamId && teamId.trim()) {
       params.append("teamId", teamId.trim());
+    }
+    if (personalOnly) {
+      params.append("personalOnly", "true");
     }
     if (sortBy && sortBy.trim()) {
       params.append("sortBy", sortBy.trim());

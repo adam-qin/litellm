@@ -79,7 +79,13 @@ const AllModelsTab = ({
     debouncedUpdateSearch(modelNameSearch);
   }, [modelNameSearch, debouncedUpdateSearch]);
 
-  const teamIdForQuery = selectedTeamValue === PERSONAL_TEAM_VALUE ? undefined : selectedTeamValue;
+  // `teamId` is meaningful only in Current Team mode. All Available must
+  // query the caller's complete accessible set, regardless of the team
+  // selected in the toolbar.
+  const teamIdForQuery =
+    modelViewMode === "current_team" && selectedTeamValue !== PERSONAL_TEAM_VALUE
+      ? selectedTeamValue
+      : undefined;
 
   const sortBy = useMemo(() => {
     if (sorting.length === 0) return undefined;
@@ -104,6 +110,7 @@ const AllModelsTab = ({
     teamIdForQuery,
     sortBy,
     sortOrder,
+    modelViewMode === "current_team" && selectedTeamValue === PERSONAL_TEAM_VALUE,
   );
   const isLoading = isLoadingModelsInfo || isLoadingModelCostMap;
 

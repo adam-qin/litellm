@@ -11157,8 +11157,10 @@ def _add_team_models_to_all_models(
     llm_router: Router,
 ) -> Dict[str, Set[str]]:
     """
-    Add team models to all models
+    Add team models to all models while enforcing immutable model ownership scope.
     """
+    from litellm.proxy.auth.model_scope import team_can_use_model_info
+
     team_models: Dict[str, Set[str]] = {}
 
     for team_object in team_db_objects_typed:
@@ -11172,23 +11174,17 @@ def _add_team_models_to_all_models(
                     model_id = model.get("model_info", {}).get("id", None)
                     if model_id is None:
                         continue
-                    # if team model id set, check if team id in user_teams
-                    team_model_id = model.get("model_info", {}).get("team_id", None)
-                    can_add_model = False
-                    if team_model_id is None:
-                        can_add_model = True
-                    elif team_model_id in team_object.team_id:
-                        can_add_model = True
-
-                    if can_add_model:
+                    model_info = model.get("model_info", {})
+                    if team_can_use_model_info(model_info, team_object):
                         team_models.setdefault(model_id, set()).add(team_object.team_id)
         else:
             for model_name in team_object.models:
                 _models = llm_router.get_model_list(model_name=model_name, team_id=team_object.team_id)
                 if _models is not None:
                     for model in _models:
-                        model_id = model.get("model_info", {}).get("id", None)
-                        if model_id is not None:
+                        model_info = model.get("model_info", {})
+                        model_id = model_info.get("id", None)
+                        if model_id is not None and team_can_use_model_info(model_info, team_object):
                             team_models.setdefault(model_id, set()).add(team_object.team_id)
     return team_models
 
@@ -11235,6 +11231,8 @@ async def _add_access_group_models_to_team_models(
         row.access_group_id: row.access_model_names or [] for row in access_group_rows
     }
 
+    from litellm.proxy.auth.model_scope import team_can_use_model_info
+
     # Second pass: resolve deployments for each eligible team
     for team_object in eligible_teams:
         model_names: Set[str] = set()
@@ -11245,8 +11243,9 @@ async def _add_access_group_models_to_team_models(
             deployments = llm_router.get_model_list(model_name=model_name, team_id=team_object.team_id)
             if deployments is not None:
                 for deployment in deployments:
-                    model_id = deployment.get("model_info", {}).get("id", None)
-                    if model_id is not None:
+                    model_info = deployment.get("model_info", {})
+                    model_id = model_info.get("id", None)
+                    if model_id is not None and team_can_use_model_info(model_info, team_object):
                         team_models.setdefault(model_id, set()).add(team_object.team_id)
 
     return team_models
@@ -11901,6 +11900,8 @@ async def _gather_team_accessible_model_ids(
     llm_router: Router,
 ) -> Set[str]:
     """Collect model IDs the team can use from router config and DB."""
+    from litellm.proxy.auth.model_scope import team_can_use_model_info
+
     team_accessible_model_ids: Set[str] = set()
     access_groups = llm_router.get_model_access_groups() if llm_router else {}
 
@@ -11908,11 +11909,9 @@ async def _gather_team_accessible_model_ids(
         model_list = llm_router.get_model_list() if llm_router else []
         if model_list is not None:
             for model in model_list:
-                model_id = model.get("model_info", {}).get("id", None)
-                if model_id is None:
-                    continue
-                team_model_id = model.get("model_info", {}).get("team_id", None)
-                if team_model_id is None or team_model_id == team_id:
+                model_info = model.get("model_info", {})
+                model_id = model_info.get("id", None)
+                if model_id is not None and team_can_use_model_info(model_info, team_object):
                     team_accessible_model_ids.add(model_id)
     else:
         resolved_model_names: Set[str] = set()
@@ -11926,8 +11925,9 @@ async def _gather_team_accessible_model_ids(
             _models = llm_router.get_model_list(model_name=model_name, team_id=team_id) if llm_router else []
             if _models is not None:
                 for model in _models:
-                    model_id = model.get("model_info", {}).get("id", None)
-                    if model_id is not None:
+                    model_info = model.get("model_info", {})
+                    model_id = model_info.get("id", None)
+                    if model_id is not None and team_can_use_model_info(model_info, team_object):
                         team_accessible_model_ids.add(model_id)
 
     try:
@@ -11937,7 +11937,9 @@ async def _gather_team_accessible_model_ids(
                 where={"model_name": {"in": _resolved_names}}
             )
             for db_model in db_models:
-                if db_model.model_id:
+                model_info = db_model.model_info if isinstance(db_model.model_info, dict) else {}
+                model_info = {**model_info, "db_model": True}
+                if db_model.model_id and team_can_use_model_info(model_info, team_object):
                     team_accessible_model_ids.add(db_model.model_id)
     except Exception as e:
         verbose_proxy_logger.debug(f"Error querying database models for team {team_id}: {str(e)}")
@@ -12028,10 +12030,14 @@ async def _filter_models_by_team_id(
     # (the admin path sets it on every non-team model) and must NOT widen the
     # team's visible set, otherwise selecting a team in the UI still shows
     # every public model the admin can call.
+    from litellm.proxy.auth.model_scope import team_can_use_model_info
+
     filtered_models = []
     for _model in all_models:
         model_info = _model.get("model_info", {})
         model_id = model_info.get("id", None)
+        if not team_can_use_model_info(model_info, team_object):
+            continue
 
         # BYOK rows owned by this team are always accessible to it, even if
         # they haven't been re-added to team.models for some reason.
@@ -12114,7 +12120,11 @@ async def model_info_v2(
     modelId: Optional[str] = fastapi.Query(None, description="Search for a specific model by its unique ID"),
     teamId: Optional[str] = fastapi.Query(
         None,
-        description="Filter models by team ID. Returns models with direct_access=True or teamId in access_via_team_ids",
+        description="Filter models by team ID. Returns only models inside that team's ownership scope",
+    ),
+    personalOnly: Optional[bool] = fastapi.Query(
+        False,
+        description="Return only non-database models directly assigned to the caller; team-scoped DB models are excluded",
     ),
     sortBy: Optional[str] = fastapi.Query(
         None,
@@ -12231,13 +12241,29 @@ async def model_info_v2(
             prisma_client=prisma_client,
         )
 
-    if include_team_models:
+    if include_team_models or personalOnly:
+        # Personal filtering relies on the same server-side access enrichment
+        # as the normal team-aware list path. Do not let API callers receive an
+        # empty or under-enriched result merely because they omitted the
+        # internal include_team_models flag.
         all_models = await get_all_team_and_direct_access_models(
             user_api_key_dict=user_api_key_dict,
             prisma_client=prisma_client,
             llm_router=llm_router,
             all_models=all_models,
         )
+
+    if personalOnly:
+        from litellm.proxy.auth.model_scope import get_model_scope
+
+        all_models = [
+            item
+            for item in all_models
+            if item.get("model_info", {}).get("direct_access", False)
+            and get_model_scope(item.get("model_info", {})) is None
+            and not item.get("model_info", {}).get("access_via_team_ids", [])
+        ]
+        search_total_count = len(all_models)
 
     # Single-ID lookups are an IDOR vector if they skip the list-path filters.
     # Always drop other teams' BYOK rows. Non-admins also get the accessible-model

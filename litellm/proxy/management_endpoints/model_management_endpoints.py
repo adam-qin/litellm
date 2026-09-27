@@ -474,6 +474,9 @@ async def _add_model_to_db(
     new_encryption_key: Optional[str] = None,
     should_create_model_in_db: bool = True,
 ) -> Optional[LiteLLM_ProxyModelTable]:
+    from litellm.proxy.auth.model_scope import stamp_model_scope
+
+    stamp_model_scope(model_params.model_info, user_api_key_dict.user_role)
     # encrypt litellm params #
     _litellm_params_dict = model_params.litellm_params.dict(exclude_none=True)
     _original_litellm_model_name = model_params.litellm_params.model

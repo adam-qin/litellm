@@ -109,6 +109,7 @@ from litellm.proxy.management_helpers.utils import (
 from litellm.proxy.utils import PrismaClient, handle_exception_on_proxy
 from litellm.repositories.budget_repository import BudgetRepository
 from litellm.repositories.organization_repository import OrganizationRepository
+from litellm.repositories.model_repository import ModelRepository
 from litellm.repositories.table_repositories import (
     AccessGroupRepository,
     DeletedTeamRepository,
@@ -211,7 +212,11 @@ class TeamMemberBudgetHandler:
 
     # Metadata keys that are owned and set by the server. Callers must not be
     # able to inject or overwrite these via request payloads.
-    SYSTEM_MANAGED_METADATA_KEYS = ("team_member_budget_id",)
+    SYSTEM_MANAGED_METADATA_KEYS = (
+        "team_member_budget_id",
+        "xhub_created_by",
+        "xhub_created_by_role",
+    )
 
     @staticmethod
     def strip_system_managed_metadata_keys(metadata: Optional[dict]) -> None:
@@ -786,6 +791,72 @@ async def _check_org_team_limits(
     )
 
 
+async def _validate_team_model_scope_references(
+    data: Union[NewTeamRequest, UpdateTeamRequest],
+    team: LiteLLM_TeamTable,
+    prisma_client: PrismaClient,
+    llm_router: Optional[Router],
+) -> None:
+    """Reject model and access-group references outside the target team's scope."""
+    from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
+
+    model_names = set(data.models if data.models is not None else team.models or [])
+    access_group_ids = list(
+        data.access_group_ids if data.access_group_ids is not None else team.access_group_ids or []
+    )
+    if access_group_ids:
+        access_groups = await AccessGroupRepository(prisma_client).table.find_many(
+            where={"access_group_id": {"in": access_group_ids}}
+        )
+        for access_group in access_groups:
+            model_names.update(access_group.access_model_names or [])
+
+    model_names.discard(SpecialModelNames.all_proxy_models.value)
+    model_names.discard(SpecialModelNames.all_team_models.value)
+    model_names.discard("*")
+
+    # Resolve both router deployments and DB-only model rows. A model can be
+    # persisted in LiteLLM_ProxyModelTable without being present in the live
+    # router, so validating only get_model_list() would let team updates and
+    # access groups claim another team's DB model.
+    db_models_by_name: Dict[str, List[Any]] = {}
+    try:
+        db_models = await ModelRepository(prisma_client).table.find_many(
+            where={"model_name": {"in": sorted(model_names)}}
+        )
+        for db_model in db_models or []:
+            db_models_by_name.setdefault(db_model.model_name, []).append(db_model)
+    except Exception as e:
+        verbose_proxy_logger.exception(
+            "Failed to resolve DB models while validating team model scope: %s", e
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Unable to verify model ownership scope"},
+        )
+
+    for model_name in model_names:
+        model_infos: List[Dict[str, Any]] = []
+        if llm_router is not None:
+            for deployment in llm_router.get_model_list(model_name=model_name) or []:
+                model_infos.append(deployment.get("model_info", {}))
+        for db_model in db_models_by_name.get(model_name, []):
+            db_info = db_model.model_info if isinstance(db_model.model_info, dict) else {}
+            model_infos.append({**db_info, "db_model": True})
+
+        scoped_model_infos = [info for info in model_infos if get_model_scope(info) is not None]
+        if scoped_model_infos and not any(team_can_use_model_info(info, team) for info in scoped_model_infos):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": (
+                        f"Model '{model_name}' is outside team '{team.team_id}' ownership scope. "
+                        "Team and access-group references cannot cross team or organization boundaries."
+                    )
+                },
+            )
+
+
 async def _check_user_team_limits(
     data: Union[NewTeamRequest, UpdateTeamRequest],
     user_api_key_dict: UserAPIKeyAuth,
@@ -1163,6 +1234,11 @@ async def new_team(
         if isinstance(data.metadata, dict):
             TeamMemberBudgetHandler.strip_system_managed_metadata_keys(data.metadata)
         data_json = data.json()
+        if not isinstance(data_json.get("metadata"), dict):
+            data_json["metadata"] = {}
+        data_json["metadata"]["xhub_created_by"] = user_api_key_dict.user_id or litellm_proxy_admin_name
+        role = user_api_key_dict.user_role
+        data_json["metadata"]["xhub_created_by_role"] = role.value if isinstance(role, LitellmUserRoles) else role
 
         ## Handle Object Permission - MCP, Vector Stores etc.
         await enforce_all_proxy_mcp_servers_grant_is_admin_only(
@@ -1196,6 +1272,12 @@ async def new_team(
         complete_team_data = LiteLLM_TeamTable(
             **data_json,
             model_id=_model_id,
+        )
+        await _validate_team_model_scope_references(
+            data=data,
+            team=complete_team_data,
+            prisma_client=prisma_client,
+            llm_router=llm_router,
         )
 
         # Set Management Endpoint Metadata Fields
@@ -1815,6 +1897,16 @@ async def update_team(
                 user_api_key_dict=user_api_key_dict,
                 existing_team_max_budget=existing_team_row.max_budget,
             )
+
+        effective_team_data = existing_team_row.model_dump()
+        effective_team_data.update(data.json(exclude_unset=True))
+        effective_team_data["organization_id"] = org_id_to_check
+        await _validate_team_model_scope_references(
+            data=data,
+            team=LiteLLM_TeamTable(**effective_team_data),
+            prisma_client=prisma_client,
+            llm_router=llm_router,
+        )
 
         updated_kv = data.json(exclude_unset=True)
 

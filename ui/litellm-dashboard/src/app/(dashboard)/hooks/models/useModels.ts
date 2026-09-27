@@ -38,6 +38,7 @@ export const useModelsInfo = (
   teamId?: string,
   sortBy?: string,
   sortOrder?: string,
+  personalOnly?: boolean,
 ) => {
   const { accessToken, userId, userRole } = useAuthorized();
   return useQuery<PaginatedModelInfoResponse>({
@@ -52,10 +53,23 @@ export const useModelsInfo = (
         ...(teamId && { teamId }),
         ...(sortBy && { sortBy }),
         ...(sortOrder && { sortOrder }),
+        ...(personalOnly && { personalOnly }),
       },
     }),
     queryFn: async () =>
-      await modelInfoCall(accessToken!, userId!, userRole!, page, size, search, modelId, teamId, sortBy, sortOrder),
+      await modelInfoCall(
+        accessToken!,
+        userId!,
+        userRole!,
+        page,
+        size,
+        search,
+        modelId,
+        teamId,
+        sortBy,
+        sortOrder,
+        personalOnly,
+      ),
     enabled: Boolean(accessToken && userId && userRole),
   });
 };
