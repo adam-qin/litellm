@@ -1957,6 +1957,7 @@ async def _user_api_key_auth_builder(
                 # guardrails (or any other metadata) added after the key was cached
                 # are picked up on subsequent requests without a cache eviction.
                 valid_token.team_metadata = _team_obj.metadata
+                valid_token.team_organization_id = _team_obj.organization_id
             else:
                 valid_token.team_object_permission = None
 
@@ -2102,6 +2103,7 @@ def _team_obj_from_token(valid_token: UserAPIKeyAuth) -> LiteLLM_TeamTableCached
         blocked=valid_token.team_blocked,
         models=valid_token.team_models,
         metadata=valid_token.team_metadata,
+        organization_id=valid_token.team_organization_id,
         object_permission_id=valid_token.team_object_permission_id,
     )
 
@@ -2327,6 +2329,8 @@ async def _run_centralized_common_checks(
         None if isinstance(global_spend_result, BaseException) else global_spend_result
     )
 
+    if team_object is not None:
+        user_api_key_auth_obj.team_organization_id = team_object.organization_id
     if user_api_key_auth_obj.org_id is None and team_object is not None and team_object.organization_id is not None:
         user_api_key_auth_obj.org_id = team_object.organization_id
 

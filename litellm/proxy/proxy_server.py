@@ -11352,6 +11352,8 @@ async def _populate_team_access_on_models(
                 user_db_object=user_object,
                 llm_router=llm_router,
             )
+    from litellm.proxy.auth.model_scope import get_model_scope
+
     if user_teams is not None:
         team_models = await get_all_team_models(
             user_teams=user_teams,
@@ -11359,24 +11361,35 @@ async def _populate_team_access_on_models(
             llm_router=llm_router,
         )
         for _model in all_models:
-            model_id = _model.get("model_info", {}).get("id", None)
-            team_only_model_id = _model.get("model_info", {}).get("team_id", None)
+            model_info = _model.get("model_info", {})
+            model_id = model_info.get("id", None)
             if model_id is not None:
-                can_use_model = False
-                if team_only_model_id is not None:
-                    team_ids = team_models.get(model_id, [])
-                    if team_ids and team_only_model_id in team_ids:
-                        can_use_model = True
+                team_ids = team_models.get(model_id, [])
+                # A restricted DB model is visible to a non-admin caller only
+                # when one of the caller's own teams was admitted by the hard
+                # ownership check in get_all_team_models(). Do not treat a
+                # missing team_id as global here: that would re-expose
+                # Proxy-Admin-created orgless models to organization teams.
+                if get_model_scope(model_info) is not None and not team_ids:
+                    model_info.pop("access_via_team_ids", None)
                 else:
-                    can_use_model = True
-                if can_use_model:
-                    _model["model_info"]["access_via_team_ids"] = team_models.get(model_id, [])
+                    model_info["access_via_team_ids"] = team_ids
 
     direct_access_model_ids = set(direct_access_models)
     for _model in all_models:
-        model_id = _model.get("model_info", {}).get("id", None)
+        model_info = _model.get("model_info", {})
+        model_id = model_info.get("id", None)
         if model_id is not None:
-            _model["model_info"]["direct_access"] = model_id in direct_access_model_ids
+            # Direct model grants must not bypass an immutable team/organization
+            # scope. This also protects the all-proxy-models sentinel from
+            # granting a caller an orgless or another team's DB deployment.
+            model_info["direct_access"] = (
+                model_id in direct_access_model_ids
+                and (
+                    get_model_scope(model_info) is None
+                    or bool(model_info.get("access_via_team_ids", []))
+                )
+            )
 
     return all_models
 
@@ -12182,6 +12195,16 @@ async def model_info_v2(
     """
     global llm_model_list, general_settings, user_config_file_path, proxy_config, llm_router
 
+    # Direct Python callers receive FastAPI Query objects for omitted optional
+    # parameters. Normalize them to their HTTP defaults before applying access
+    # controls so a Query object cannot accidentally enable a code path.
+    if not isinstance(user_models_only, bool):
+        user_models_only = False
+    if not isinstance(include_team_models, bool):
+        include_team_models = False
+    if not isinstance(personalOnly, bool):
+        personalOnly = False
+
     # Return empty data array when no models are configured (graceful handling for fresh installs)
     if llm_router is None or not llm_router.model_list:
         return {
@@ -12241,7 +12264,12 @@ async def model_info_v2(
             prisma_client=prisma_client,
         )
 
-    if include_team_models or personalOnly:
+    # Non-admin callers must always use the team-aware access path, including
+    # the default "All Available" request where include_team_models is false.
+    # Otherwise the endpoint returns the raw router model list and exposes
+    # other organizations' team deployments and orgless Proxy Admin DB models.
+    caller_is_proxy_admin = user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN
+    if include_team_models or personalOnly or not caller_is_proxy_admin:
         # Personal filtering relies on the same server-side access enrichment
         # as the normal team-aware list path. Do not let API callers receive an
         # empty or under-enriched result merely because they omitted the

@@ -1547,3 +1547,126 @@ async def test_populate_team_access_grants_all_proxy_models_user_direct_access(
 
     assert [m["model_info"]["id"] for m in visible] == ["global-id-1"]
     assert visible[0]["model_info"]["direct_access"] is True
+
+
+@pytest.mark.asyncio
+async def test_all_available_hides_restricted_models_outside_callers_organization_team(
+    monkeypatch,
+):
+    """Non-admin All Available must not expose orgless or other-team DB models."""
+    own_team_model = {
+        "model_name": "own-team-model",
+        "model_info": {
+            "id": "own-team-id",
+            "db_model": True,
+            "team_id": "team-a",
+            "xhub_model_scope": "team_only",
+        },
+    }
+    other_team_model = {
+        "model_name": "other-team-model",
+        "model_info": {
+            "id": "other-team-id",
+            "db_model": True,
+            "team_id": "team-b",
+            "xhub_model_scope": "team_only",
+        },
+    }
+    orgless_proxy_model = {
+        "model_name": "orgless-proxy-model",
+        "model_info": {
+            "id": "orgless-id",
+            "db_model": True,
+            "xhub_model_scope": "orgless_proxy_team",
+        },
+    }
+
+    router = MagicMock()
+    router.get_model_ids.return_value = ["own-team-id", "other-team-id", "orgless-id"]
+    user_row = LiteLLM_UserTable(
+        user_id="u",
+        user_role=LitellmUserRoles.INTERNAL_USER.value,
+        models=[ps.SpecialModelNames.all_proxy_models.value],
+        teams=["team-a"],
+    )
+    prisma_client = MagicMock()
+    prisma_client.db.litellm_usertable.find_unique = AsyncMock(return_value=user_row)
+    monkeypatch.setattr(
+        ps,
+        "get_all_team_models",
+        AsyncMock(return_value={"own-team-id": ["team-a"]}),
+    )
+
+    caller = UserAPIKeyAuth(
+        user_id="u", user_role=LitellmUserRoles.INTERNAL_USER, team_models=[]
+    )
+    visible = await ps.get_all_team_and_direct_access_models(
+        user_api_key_dict=caller,
+        prisma_client=prisma_client,
+        llm_router=router,
+        all_models=[own_team_model, other_team_model, orgless_proxy_model],
+    )
+
+    assert [model["model_info"]["id"] for model in visible] == ["own-team-id"]
+    assert visible[0]["model_info"]["access_via_team_ids"] == ["team-a"]
+    assert visible[0]["model_info"]["direct_access"] is True
+
+
+@pytest.mark.asyncio
+async def test_model_info_v2_all_available_forces_team_scope_for_non_admin(
+    monkeypatch,
+):
+    """All Available must use server-side access filtering even without query flags."""
+    own_team_model = {
+        "model_name": "own-team-model",
+        "model_info": {"id": "own-team-id", "db_model": True, "team_id": "team-a"},
+    }
+    other_team_model = {
+        "model_name": "other-team-model",
+        "model_info": {"id": "other-team-id", "db_model": True, "team_id": "team-b"},
+    }
+    router = MagicMock()
+    router.model_list = [own_team_model, other_team_model]
+
+    monkeypatch.setattr(ps, "llm_router", router)
+    monkeypatch.setattr(ps, "prisma_client", MagicMock())
+    monkeypatch.setattr(ps.proxy_config, "get_config", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        ps,
+        "_apply_search_filter_to_models",
+        AsyncMock(side_effect=lambda all_models, **kw: (all_models, len(all_models))),
+    )
+    access_filter = AsyncMock(return_value=[own_team_model])
+    monkeypatch.setattr(ps, "get_all_team_and_direct_access_models", access_filter)
+    monkeypatch.setattr(
+        ps, "_enrich_model_info_with_litellm_data", lambda model, **kw: model
+    )
+    import litellm.proxy.agent_endpoints.model_list_helpers as mlh
+
+    monkeypatch.setattr(
+        mlh,
+        "append_agents_to_model_info",
+        AsyncMock(side_effect=lambda models, **kw: models),
+    )
+
+    caller = UserAPIKeyAuth(
+        user_id="u", user_role=LitellmUserRoles.INTERNAL_USER, team_models=[]
+    )
+    response = await ps.model_info_v2(
+        user_api_key_dict=caller,
+        model=None,
+        user_models_only=False,
+        include_team_models=False,
+        debug=False,
+        page=1,
+        size=50,
+        search=None,
+        modelId=None,
+        teamId=None,
+        personalOnly=False,
+        sortBy=None,
+        sortOrder="asc",
+    )
+
+    access_filter.assert_awaited_once()
+    assert [model["model_info"]["id"] for model in response["data"]] == ["own-team-id"]

@@ -116,6 +116,7 @@ from litellm.router_utils.clientside_credential_handler import (
 )
 from litellm.router_utils.common_utils import (
     _is_proxy_admin_request,
+    filter_model_ownership_scope,
     filter_team_based_models,
     filter_web_search_deployments,
 )
@@ -10458,12 +10459,33 @@ class Router:
             request_team_id = metadata.get("user_api_key_team_id") or litellm_metadata.get("user_api_key_team_id")
         # check if aliases set on litellm model alias map
         if specific_deployment is True:
-            return model, self._get_deployment_by_litellm_model(model=model)
+            specific_deployments = filter_model_ownership_scope(
+                healthy_deployments=self._get_deployment_by_litellm_model(model=model),
+                request_kwargs=request_kwargs,
+            )
+            if not specific_deployments:
+                raise litellm.BadRequestError(
+                    message=f"You passed in model={model}. The specific deployment is outside the requester's ownership scope",
+                    model=model,
+                    llm_provider="",
+                )
+            return model, specific_deployments
         elif self.has_model_id(model):
             deployment = self.get_deployment(model_id=model)
             if deployment is not None:
                 deployment_model = deployment.litellm_params.model
-                return deployment_model, deployment.model_dump(exclude_none=True)
+                deployment_dict = deployment.model_dump(exclude_none=True)
+                scoped_deployment = filter_model_ownership_scope(
+                    healthy_deployments=deployment_dict,
+                    request_kwargs=request_kwargs,
+                )
+                if not scoped_deployment:
+                    raise litellm.BadRequestError(
+                        message=f"You passed in model={model}. The deployment is outside the requester's ownership scope",
+                        model=model,
+                        llm_provider="",
+                    )
+                return deployment_model, scoped_deployment
             raise ValueError(
                 f"LiteLLM Router: Trying to call specific deployment, but Model ID :{model} does not exist in Model ID map"
             )
@@ -10547,6 +10569,17 @@ class Router:
                     model=model,
                     llm_provider="",
                 )
+
+        healthy_deployments = filter_model_ownership_scope(
+            healthy_deployments=healthy_deployments,
+            request_kwargs=request_kwargs,
+        )
+        if not healthy_deployments:
+            raise litellm.BadRequestError(
+                message=f"No deployments available for model={model} inside the requester's ownership scope",
+                model=model,
+                llm_provider="",
+            )
 
         if litellm.model_alias_map and model in litellm.model_alias_map:
             model = litellm.model_alias_map[
@@ -10638,6 +10671,10 @@ class Router:
         # IF TEAM ID SPECIFIED ON MODEL, AND REQUEST CONTAINS USER_API_KEY_TEAM_ID, FILTER OUT MODELS THAT ARE NOT IN THE TEAM
         ## THIS PREVENTS WRITING FILES OF OTHER TEAMS TO MODELS THAT ARE TEAM-ONLY MODELS
         healthy_deployments = filter_team_based_models(
+            healthy_deployments=healthy_deployments,
+            request_kwargs=request_kwargs,
+        )
+        healthy_deployments = filter_model_ownership_scope(
             healthy_deployments=healthy_deployments,
             request_kwargs=request_kwargs,
         )

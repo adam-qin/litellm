@@ -2645,6 +2645,11 @@ class UserAPIKeyAuth(LiteLLM_VerificationTokenView):  # the expected response ob
     # Team object_permission preloaded in auth (e.g. get_team_object) to avoid
     # per-request object_permission fetches in downstream checks (vector stores, etc.)
     team_object_permission: Optional[LiteLLM_ObjectPermissionTable] = None
+    team_organization_id: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Server-derived organization_id of the key's team for routing ownership checks.",
+    )
     # Decoded upstream IdP claims (groups, roles, etc.) propagated by JWT auth machinery
     # and forwarded into outbound tokens by guardrails such as MCPJWTSigner.
     jwt_claims: Optional[Dict] = None
@@ -2663,6 +2668,7 @@ class UserAPIKeyAuth(LiteLLM_VerificationTokenView):  # the expected response ob
         values.pop("mcp_admitted_user_subject", None)
         values.pop("mcp_source_team_rpm_limits", None)
         values.pop("via_virtual_key", None)
+        values.pop("team_organization_id", None)
         if values.get("api_key") is not None:
             values.update({"token": cls._safe_hash_litellm_api_key(values.get("api_key"))})
             if isinstance(values.get("api_key"), str):

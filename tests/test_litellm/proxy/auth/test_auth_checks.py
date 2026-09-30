@@ -465,6 +465,85 @@ async def test_can_team_access_model_all_team_models_expands_router_models():
     assert exc_info.value.type == ProxyErrorTypes.team_model_access_denied
 
 
+def test_team_scope_check_uses_team_scoped_candidates_for_duplicate_model_names():
+    from litellm import Router
+    from litellm.proxy.auth.auth_checks import _enforce_team_model_scope
+
+    router = Router(
+        model_list=[
+            {
+                "model_name": "gpt-5.6-terra",
+                "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-global"},
+                "model_info": {
+                    "id": "orgless-terra",
+                    "db_model": True,
+                    "xhub_model_scope": "orgless_proxy_team",
+                },
+            },
+            {
+                "model_name": "gpt-5.6-terra_team-a",
+                "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-team-a"},
+                "model_info": {
+                    "id": "team-a-terra",
+                    "db_model": True,
+                    "team_id": "team-a",
+                    "team_public_model_name": "gpt-5.6-terra",
+                    "xhub_model_scope": "team_only",
+                },
+            },
+            {
+                "model_name": "gpt-5.6-terra_team-b",
+                "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-team-b"},
+                "model_info": {
+                    "id": "team-b-terra",
+                    "db_model": True,
+                    "team_id": "team-b",
+                    "team_public_model_name": "gpt-5.6-terra",
+                    "xhub_model_scope": "team_only",
+                },
+            },
+        ]
+    )
+    team = LiteLLM_TeamTable(team_id="team-a", organization_id="org-a")
+
+    _enforce_team_model_scope(
+        model="gpt-5.6-terra",
+        team_object=team,
+        llm_router=router,
+    )
+
+
+def test_team_scope_check_rejects_other_team_model_id():
+    from litellm import Router
+    from litellm.proxy.auth.auth_checks import _enforce_team_model_scope
+
+    router = Router(
+        model_list=[
+            {
+                "model_name": "gpt-5.6-terra_team-b",
+                "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-team-b"},
+                "model_info": {
+                    "id": "team-b-terra",
+                    "db_model": True,
+                    "team_id": "team-b",
+                    "team_public_model_name": "gpt-5.6-terra",
+                    "xhub_model_scope": "team_only",
+                },
+            }
+        ]
+    )
+    team = LiteLLM_TeamTable(team_id="team-a", organization_id="org-a")
+
+    with pytest.raises(ProxyException) as exc_info:
+        _enforce_team_model_scope(
+            model="team-b-terra",
+            team_object=team,
+            llm_router=router,
+        )
+
+    assert exc_info.value.type == ProxyErrorTypes.team_model_access_denied
+
+
 @pytest.mark.asyncio
 async def test_get_key_object_should_reconnect_once_on_db_connection_error():
     mock_prisma_client = MagicMock()

@@ -8,6 +8,7 @@ from litellm.proxy._types import UserAPIKeyAuth
 from litellm.router_utils.common_utils import (
     _deployment_supports_web_search,
     add_model_file_id_mappings,
+    filter_model_ownership_scope,
     filter_team_based_models,
     filter_web_search_deployments,
 )
@@ -194,6 +195,174 @@ class TestFilterTeamBasedModels:
         expected_ids = ["deployment-1", "deployment-2"]
         result_ids = [d.get("model_info", {}).get("id") for d in result]
         assert sorted(result_ids) == sorted(expected_ids)
+
+
+class TestFilterModelOwnershipScope:
+    def test_filters_same_name_deployments_to_request_team(self):
+        auth = UserAPIKeyAuth(
+            team_id="team-a",
+            org_id="org-a",
+            team_metadata={"xhub_created_by_role": "internal_user"},
+        )
+        auth.team_organization_id = "org-a"
+        deployments = [
+            {
+                "model_info": {
+                    "id": "orgless",
+                    "db_model": True,
+                    "xhub_model_scope": "orgless_proxy_team",
+                }
+            },
+            {
+                "model_info": {
+                    "id": "team-a-model",
+                    "db_model": True,
+                    "team_id": "team-a",
+                    "xhub_model_scope": "team_only",
+                }
+            },
+            {
+                "model_info": {
+                    "id": "team-b-model",
+                    "db_model": True,
+                    "team_id": "team-b",
+                    "xhub_model_scope": "team_only",
+                }
+            },
+        ]
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": auth,
+            }
+        }
+
+        result = filter_model_ownership_scope(deployments, request_kwargs)
+
+        assert [item["model_info"]["id"] for item in result] == ["team-a-model"]
+
+    def test_orgless_proxy_team_can_use_orgless_model(self):
+        auth = UserAPIKeyAuth(
+            team_id="team-a",
+            team_metadata={"xhub_created_by_role": "proxy_admin"},
+        )
+        auth.team_organization_id = None
+        deployment = {
+            "model_info": {
+                "id": "orgless",
+                "db_model": True,
+                "xhub_model_scope": "orgless_proxy_team",
+            }
+        }
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": auth,
+            }
+        }
+
+        assert filter_model_ownership_scope(deployment, request_kwargs) == deployment
+
+    def test_dict_auth_preserves_proxy_admin_orgless_team_scope(self):
+        deployment = {
+            "model_info": {
+                "id": "orgless",
+                "db_model": True,
+                "xhub_model_scope": "orgless_proxy_team",
+            }
+        }
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": {
+                    "team_organization_id": None,
+                    "team_metadata": {"xhub_created_by_role": "proxy_admin"},
+                },
+            }
+        }
+
+        assert filter_model_ownership_scope(deployment, request_kwargs) == deployment
+
+    def test_router_rejects_other_team_model_id(self):
+        router = Router(
+            model_list=[
+                {
+                    "model_name": "gpt-5.6-terra_team-b",
+                    "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-team-b"},
+                    "model_info": {
+                        "id": "team-b-model-id",
+                        "db_model": True,
+                        "team_id": "team-b",
+                        "xhub_model_scope": "team_only",
+                    },
+                }
+            ]
+        )
+        auth = UserAPIKeyAuth(team_id="team-a", org_id="org-a")
+        auth.team_organization_id = "org-a"
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": auth,
+            }
+        }
+
+        with pytest.raises(Exception, match="outside the requester's ownership scope"):
+            router._common_checks_available_deployment(
+                model="team-b-model-id",
+                request_kwargs=request_kwargs,
+            )
+
+    def test_router_allows_same_team_model_id(self):
+        router = Router(
+            model_list=[
+                {
+                    "model_name": "gpt-5.6-terra_team-a",
+                    "litellm_params": {"model": "openai/gpt-5", "api_key": "sk-team-a"},
+                    "model_info": {
+                        "id": "team-a-model-id",
+                        "db_model": True,
+                        "team_id": "team-a",
+                        "xhub_model_scope": "team_only",
+                    },
+                }
+            ]
+        )
+        auth = UserAPIKeyAuth(team_id="team-a", org_id="org-a")
+        auth.team_organization_id = "org-a"
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": auth,
+            }
+        }
+
+        _, deployment = router._common_checks_available_deployment(
+            model="team-a-model-id",
+            request_kwargs=request_kwargs,
+        )
+
+        assert deployment["model_info"]["id"] == "team-a-model-id"
+
+    def test_specific_other_team_deployment_is_rejected(self):
+        auth = UserAPIKeyAuth(team_id="team-a", org_id="org-a")
+        auth.team_organization_id = "org-a"
+        deployment = {
+            "model_info": {
+                "id": "team-b-model",
+                "db_model": True,
+                "team_id": "team-b",
+                "xhub_model_scope": "team_only",
+            }
+        }
+        request_kwargs = {
+            "metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": auth,
+            }
+        }
+
+        assert filter_model_ownership_scope(deployment, request_kwargs) == []
 
 
 class TestDeploymentSupportsWebSearch:

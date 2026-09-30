@@ -11,6 +11,12 @@ from litellm.types.router import CredentialLiteLLMParams
 from litellm._logging import verbose_logger
 
 
+def _auth_value(auth: object, key: str) -> object:
+    if isinstance(auth, Mapping):
+        return auth.get(key)
+    return getattr(auth, key, None)
+
+
 def _is_proxy_admin_request(request_kwargs: Optional[Mapping[str, object]]) -> bool:
     if request_kwargs is None:
         return False
@@ -19,7 +25,7 @@ def _is_proxy_admin_request(request_kwargs: Optional[Mapping[str, object]]) -> b
     metadata = metadata_value if isinstance(metadata_value, Mapping) else {}
     litellm_metadata = litellm_metadata_value if isinstance(litellm_metadata_value, Mapping) else {}
     user_api_key_auth = metadata.get("user_api_key_auth") or litellm_metadata.get("user_api_key_auth")
-    return getattr(user_api_key_auth, "user_role", None) == "proxy_admin"
+    return _auth_value(user_api_key_auth, "user_role") == "proxy_admin"
 
 
 def get_litellm_params_sensitive_credential_hash(litellm_params: dict) -> str:
@@ -55,6 +61,53 @@ def add_model_file_id_mappings(
         if model_id is not None:
             model_file_id_mapping[model_id] = response.id
     return model_file_id_mapping
+
+
+def filter_model_ownership_scope(
+    healthy_deployments: Union[List[Dict], Dict],
+    request_kwargs: Optional[Dict] = None,
+) -> Union[List[Dict], Dict]:
+    """Apply XHub ownership scope to the Router's final deployment candidates."""
+    if request_kwargs is None:
+        return healthy_deployments
+
+    metadata = request_kwargs.get("metadata") or {}
+    litellm_metadata = request_kwargs.get("litellm_metadata") or {}
+    request_team_id = metadata.get("user_api_key_team_id") or litellm_metadata.get("user_api_key_team_id")
+    user_api_key_auth = metadata.get("user_api_key_auth") or litellm_metadata.get("user_api_key_auth")
+
+    # A Proxy Admin request without a team context is the global management plane.
+    if request_team_id is None and _is_proxy_admin_request(request_kwargs):
+        return healthy_deployments
+
+    deployments = healthy_deployments if isinstance(healthy_deployments, list) else [healthy_deployments]
+
+    from litellm.models.team import LiteLLM_TeamTable
+    from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
+
+    team = None
+    if request_team_id is not None:
+        team = LiteLLM_TeamTable(
+            team_id=request_team_id,
+            organization_id=_auth_value(user_api_key_auth, "team_organization_id")
+            if user_api_key_auth is not None
+            else None,
+            metadata=(_auth_value(user_api_key_auth, "team_metadata") or {})
+            if user_api_key_auth is not None
+            else {},
+        )
+
+    filtered_deployments: List[Dict] = []
+    for deployment in deployments:
+        model_info = deployment.get("model_info") or {}
+        if get_model_scope(model_info) is None:
+            filtered_deployments.append(deployment)
+        elif team is not None and team_can_use_model_info(model_info, team):
+            filtered_deployments.append(deployment)
+
+    if isinstance(healthy_deployments, dict):
+        return filtered_deployments[0] if filtered_deployments else []
+    return filtered_deployments
 
 
 def filter_team_based_models(
@@ -106,9 +159,13 @@ def filter_team_based_models(
         if matches_requested_model:
             return healthy_deployments
 
-    ids_to_remove = set()
     if isinstance(healthy_deployments, dict):
-        return healthy_deployments
+        model_team_id = (healthy_deployments.get("model_info") or {}).get("team_id")
+        if model_team_id is None or model_team_id == request_team_id:
+            return healthy_deployments
+        return []
+
+    ids_to_remove = set()
     for deployment in healthy_deployments:
         _model_info = deployment.get("model_info") or {}
         model_team_id = _model_info.get("team_id")

@@ -3039,13 +3039,22 @@ def _resolve_key_models_for_auth_check(valid_token: UserAPIKeyAuth) -> List[str]
 def _router_deployments_for_scope_check(
     model: Union[str, List[str]],
     llm_router: Optional[Router],
+    team_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """Resolve the same team-scoped deployment candidates used by the Router."""
     if llm_router is None:
         return []
     model_names = model if isinstance(model, list) else [model]
     deployments: List[Dict[str, Any]] = []
     for model_name in model_names:
-        deployments.extend(llm_router.get_model_list(model_name=model_name) or [])
+        if llm_router.has_model_id(model_name):
+            deployment = llm_router.get_deployment(model_id=model_name)
+            if deployment is not None:
+                deployments.append(deployment.model_dump(exclude_none=True))
+            continue
+        deployments.extend(
+            llm_router.get_model_list(model_name=model_name, team_id=team_id) or []
+        )
     return deployments
 
 
@@ -3057,7 +3066,11 @@ def _enforce_team_model_scope(
     """Apply XHub ownership scope before allowlists or access groups."""
     from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
 
-    deployments = _router_deployments_for_scope_check(model=model, llm_router=llm_router)
+    deployments = _router_deployments_for_scope_check(
+        model=model,
+        llm_router=llm_router,
+        team_id=team_object.team_id if team_object is not None else None,
+    )
     scoped_deployments = [
         deployment for deployment in deployments if get_model_scope(deployment.get("model_info", {})) is not None
     ]
@@ -3165,6 +3178,7 @@ async def can_key_call_resolved_model(
                 blocked=valid_token.team_blocked,
                 team_alias=valid_token.team_alias,
                 metadata=valid_token.team_metadata,
+                organization_id=valid_token.team_organization_id,
                 object_permission_id=valid_token.team_object_permission_id,
                 object_permission=valid_token.team_object_permission,
             )
