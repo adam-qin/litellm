@@ -2354,6 +2354,7 @@ async def view_spend_logs(
                     order={
                         "startTime": "desc",
                     },
+                    take=10000,
                 )
                 return data
 
@@ -2424,12 +2425,15 @@ async def view_spend_logs(
                 scoped_filter["user"] = user_id
 
             if not scoped_filter:
-                spend_logs = await prisma_client.get_data(table_name="spend", query_type="find_all")
+                spend_logs = await prisma_client.get_data(
+                    table_name="spend", query_type="find_all", limit=10000
+                )
                 return spend_logs
 
             data = await SpendLogsRepository(prisma_client).table.find_many(
                 where=scoped_filter,  # type: ignore
                 order={"startTime": "desc"},
+                take=10000,
             )
             return data
 

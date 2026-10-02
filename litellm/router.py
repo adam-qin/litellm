@@ -128,6 +128,7 @@ from litellm.router_utils.cooldown_handlers import (
     _get_cooldown_deployments,
     _set_cooldown_deployments,
     is_advisor_orchestration_failure,
+    is_caller_timeout_408,
 )
 from litellm.router_utils.fallback_event_handlers import (
     _check_non_standard_fallback_format,
@@ -145,6 +146,7 @@ from litellm.router_utils.health_state_cache import DeploymentHealthCache
 from litellm.router_utils.pre_call_checks.deployment_affinity_check import (
     DeploymentAffinityCheck,
 )
+from litellm.constants import SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY
 from litellm.router_utils.pre_call_checks.model_rate_limit_check import (
     ModelRateLimitingCheck,
 )
@@ -209,6 +211,7 @@ from litellm.types.utils import ModelInfo as ModelMapInfo
 from litellm.types.utils import (
     ModelResponseStream,
     StandardLoggingPayload,
+    StandardLoggingRoutingDecision,
     Usage,
 )
 from litellm.utils import (
@@ -531,6 +534,10 @@ class Router:
         # ``id()``-reuse risk after GC). See
         # ``litellm.proxy.auth.auth_checks._is_model_cost_zero``.
         self._zero_cost_cache: Dict[str, bool] = {}
+        # These values are consumed while set_model_list initializes complexity-router
+        # deployments, so they must exist before the first deployment is registered.
+        self.deployment_affinity_ttl_seconds = deployment_affinity_ttl_seconds
+        self.model_group_affinity_config = model_group_affinity_config
 
         if model_list is not None:
             # set_model_list will build indices automatically
@@ -717,21 +724,8 @@ class Router:
         # If model_group_affinity_config is set but no global affinity checks were
         # enabled, we still need the DeploymentAffinityCheck callback (with global
         # flags all False) so per-group config can activate affinity per model group.
-        if self.model_group_affinity_config and not any(
-            isinstance(cb, DeploymentAffinityCheck) for cb in (self.optional_callbacks or [])
-        ):
-            if self.optional_callbacks is None:
-                self.optional_callbacks = []
-            affinity_callback = DeploymentAffinityCheck(
-                cache=self.cache,
-                ttl_seconds=self.deployment_affinity_ttl_seconds,
-                enable_user_key_affinity=False,
-                enable_responses_api_affinity=False,
-                enable_session_id_affinity=False,
-                model_group_affinity_config=self.model_group_affinity_config,
-            )
-            self.optional_callbacks.append(affinity_callback)
-            litellm.logging_callback_manager.add_litellm_callback(affinity_callback)
+        if self.model_group_affinity_config:
+            self._ensure_deployment_affinity_callback()
 
         if self.alerting_config is not None:
             self._initialize_alerting()
@@ -1540,6 +1534,22 @@ class Router:
                 raise ValueError(
                     f"Dictionary '{fallback_dict}' must have exactly one key, but has {len(fallback_dict)} keys."
                 )
+
+    def _ensure_deployment_affinity_callback(self) -> None:
+        if self.optional_callbacks is None:
+            self.optional_callbacks = []
+        if any(isinstance(cb, DeploymentAffinityCheck) for cb in self.optional_callbacks):
+            return
+        affinity_callback = DeploymentAffinityCheck(
+            cache=self.cache,
+            ttl_seconds=self.deployment_affinity_ttl_seconds,
+            enable_user_key_affinity=False,
+            enable_responses_api_affinity=False,
+            enable_session_id_affinity=False,
+            model_group_affinity_config=self.model_group_affinity_config,
+        )
+        self.optional_callbacks.append(affinity_callback)
+        litellm.logging_callback_manager.add_litellm_callback(affinity_callback)
 
     def _add_encrypted_content_affinity_check(self, enable_global_affinity: bool) -> None:
         from litellm.router_utils.pre_call_checks.encrypted_content_affinity_check import (
@@ -7021,6 +7031,15 @@ class Router:
             litellm_params = kwargs.get("litellm_params", {})
             _model_info = litellm_params.get("model_info", {})
 
+            timeout_details = dict(kwargs)
+            timeout_details.setdefault("api_call_start_time", start_time)
+            timeout_details.setdefault("end_time", end_time)
+            if is_caller_timeout_408(timeout_details, exception_status, ended=end_time):
+                verbose_router_logger.debug(
+                    "Router: skipping cooldown because the caller-set timeout caused this 408"
+                )
+                return False
+
             exception_headers = litellm.litellm_core_utils.exception_mapping_utils._get_response_headers(
                 original_exception=exception
             )
@@ -7692,6 +7711,8 @@ class Router:
             litellm_router_instance=self,
             complexity_router_config=complexity_router_config,
         )
+        if complexity_router._uses_deployment_pin:
+            self._ensure_deployment_affinity_callback()
         self._register_pre_routing_strategy(
             registry=self.complexity_routers,
             deployment=deployment,
@@ -11131,6 +11152,52 @@ class Router:
                 return tagged.strategy
         return candidates[0].strategy
 
+    @staticmethod
+    def _record_routing_decision(
+        request_kwargs: Dict,
+        routing_decision: Optional[StandardLoggingRoutingDecision],
+    ) -> None:
+        if routing_decision is None:
+            for bucket in (request_kwargs.get("metadata"), request_kwargs.get("litellm_metadata")):
+                if isinstance(bucket, dict):
+                    bucket.pop("routing_decision", None)
+            return
+
+        decision = routing_decision
+        from litellm.litellm_core_utils.redact_messages import should_redact_message_logging
+
+        if should_redact_message_logging(
+            {
+                "litellm_params": request_kwargs,
+                "standard_callback_dynamic_params": request_kwargs.get(
+                    "standard_callback_dynamic_params"
+                ),
+            }
+        ):
+            decision = cast(
+                StandardLoggingRoutingDecision,
+                {
+                    field: value
+                    for field, value in routing_decision.items()
+                    if field not in PROMPT_QUOTING_ROUTING_DECISION_FIELDS
+                },
+            )
+        Router._stamp_or_clear_metadata_key(request_kwargs, "routing_decision", decision)
+
+    @staticmethod
+    def _stamp_or_clear_metadata_key(request_kwargs: Dict, key: str, value: Optional[Any]) -> None:
+        metadata = request_kwargs.get("litellm_metadata")
+        if not isinstance(metadata, dict):
+            metadata = request_kwargs.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = request_kwargs.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            return
+        if value is None:
+            metadata.pop(key, None)
+        else:
+            metadata[key] = value
+
     async def async_pre_routing_hook(
         self,
         model: str,
@@ -11155,6 +11222,10 @@ class Router:
 
         router_strategy = self._select_pre_routing_strategy(model=model, request_kwargs=request_kwargs)
         if router_strategy is None:
+            self._stamp_or_clear_metadata_key(
+                request_kwargs, SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY, None
+            )
+            self._record_routing_decision(request_kwargs, None)
             return None
 
         pre_routing_hook_response = await router_strategy.async_pre_routing_hook(
@@ -11163,6 +11234,21 @@ class Router:
             messages=messages,
             input=input,
             specific_deployment=specific_deployment,
+        )
+
+        self._record_routing_decision(
+            request_kwargs,
+            pre_routing_hook_response.routing_decision if pre_routing_hook_response is not None else None,
+        )
+
+        self._stamp_or_clear_metadata_key(
+            request_kwargs,
+            SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY,
+            (
+                pre_routing_hook_response.session_affinity_ttl_seconds
+                if pre_routing_hook_response is not None
+                else None
+            ),
         )
 
         # `model` (the alias, e.g. "smart-router") is never the deployment actually

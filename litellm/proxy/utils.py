@@ -118,6 +118,10 @@ from litellm.proxy._types import (
     UserAPIKeyAuth,
 )
 from litellm.proxy.auth.route_checks import RouteChecks
+from litellm.proxy.common_utils.config_sync_pubsub import (
+    coordination_redis_cache,
+    publish_config_change,
+)
 from litellm.proxy.common_utils.user_api_key_cache import UserApiKeyCache
 from litellm.proxy.db.create_views import (
     create_missing_views,
@@ -2960,9 +2964,14 @@ async def get_config_param(prisma_client: Any, param_name: str) -> Optional[Any]
     return row
 
 
+async def evict_config_param(param_name: str) -> None:
+    await litellm_config_cache.async_delete_cache(_config_cache_key(param_name))
+
+
 async def invalidate_config_param(param_name: str) -> None:
     """Evict from both cache layers; call after every LiteLLM_Config write."""
-    await litellm_config_cache.async_delete_cache(_config_cache_key(param_name))
+    await evict_config_param(param_name)
+    await publish_config_change(redis_cache=coordination_redis_cache(), object_type=param_name)
 
 
 async def prefetch_config_params(prisma_client: Any, param_names: List[str]) -> None:
@@ -3607,12 +3616,14 @@ class PrismaClient:
                         response = await SpendLogsRepository(self).table.find_many(  # type: ignore
                             where={
                                 key_val["key"]: key_val["value"],  # type: ignore
-                            }
+                            },
+                            take=limit if limit is not None else 1000,
                         )
                     return response
                 else:
                     response = await SpendLogsRepository(self).table.find_many(  # type: ignore
                         order={"startTime": "desc"},
+                        take=limit if limit is not None else 1000,
                     )
                     return response
             elif table_name == "budget" and reset_at is not None:
@@ -5191,6 +5202,7 @@ class PrismaClient:
                     {"model_name": "asc"},
                     {"checked_at": "desc"},
                 ],
+                take=10000,
             )
         except Exception as e:
             verbose_proxy_logger.error(f"Error getting all latest health checks: {e}")

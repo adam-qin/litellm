@@ -28,7 +28,7 @@ from .completion import CompletionRequest
 from .embedding import EmbeddingRequest
 from .llms.openai import OpenAIFileObject
 from .search import SearchProvider
-from .utils import CustomPricingLiteLLMParams, ModelResponse
+from .utils import CustomPricingLiteLLMParams, ModelResponse, StandardLoggingRoutingDecision
 
 
 class ConfigurableClientsideParamsCustomAuth(TypedDict):
@@ -839,6 +839,9 @@ class PreRoutingHookResponse(BaseModel):
 
     model: str
     messages: Optional[List[Dict[str, Any]]]
+    session_affinity_ttl_seconds: int | None = None
+    routing_decision: StandardLoggingRoutingDecision | None = None
+    routing_decision: StandardLoggingRoutingDecision | None = None
 
 
 _PreRoutingStrategyT_co = TypeVar("_PreRoutingStrategyT_co", covariant=True)

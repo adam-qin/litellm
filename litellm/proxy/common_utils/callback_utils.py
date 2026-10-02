@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 import litellm
 from litellm import get_secret
 from litellm._logging import verbose_proxy_logger
-from litellm.constants import PRE_CALL_EXECUTED_GUARDRAILS_KEY
+from litellm.constants import PRE_CALL_EXECUTED_GUARDRAILS_KEY, SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.litellm_core_utils.core_helpers import (
     get_metadata_variable_name_from_kwargs,
@@ -436,7 +436,9 @@ LITELLM_PROXY_INTERNAL_METADATA_KEYS = frozenset(
         "pillar_session_id_response",
         "standard_logging_object",
         "proxy_server_request",
+        "routing_decision",
         "secret_fields",
+        SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY,
     }
 )
 

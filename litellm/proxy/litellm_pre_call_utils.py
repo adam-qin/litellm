@@ -13,7 +13,11 @@ from starlette.datastructures import Headers
 import litellm
 from litellm._logging import verbose_logger, verbose_proxy_logger
 from litellm._service_logger import ServiceLogging
-from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS, PRE_CALL_EXECUTED_GUARDRAILS_KEY
+from litellm.constants import (
+    LITELLM_PROXY_MASTER_KEY_ALIAS,
+    PRE_CALL_EXECUTED_GUARDRAILS_KEY,
+    SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY,
+)
 from litellm.litellm_core_utils.credential_accessor import CredentialAccessor
 from litellm.litellm_core_utils.initialize_dynamic_callback_params import (
     iter_client_callback_metadata_dicts,
@@ -197,6 +201,7 @@ _UNTRUSTED_METADATA_CONTROL_FIELDS = (
     "applied_guardrails",
     "applied_policies",
     "policy_sources",
+    "routing_decision",
     "standard_logging_object",
     "proxy_server_request",
     "secret_fields",
@@ -205,6 +210,7 @@ _UNTRUSTED_METADATA_CONTROL_FIELDS = (
     "client_disconnected",
     "error_information",
     PRE_CALL_EXECUTED_GUARDRAILS_KEY,
+    SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY,
 )
 
 _UNTRUSTED_REQUEST_HEADER_CONTROL_FIELDS = frozenset(

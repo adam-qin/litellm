@@ -2674,6 +2674,48 @@ class StandardLoggingPromptManagementMetadata(TypedDict):
     prompt_integration: str
 
 
+class StandardLoggingRoutingDecisionTierBoundaries(TypedDict):
+    """Complexity tier boundaries in effect when a routing decision was made."""
+
+    simple_medium: float
+    medium_complex: float
+    complex_reasoning: float
+
+
+RoutingDecisionCause = Literal[
+    "heuristic_scorer",
+    "reasoning_override",
+    "llm_classifier",
+    "literal_keyword_match",
+    "semantic_keyword_match",
+    "session_affinity_pin",
+    "session_affinity_escalation",
+    "default_fallback",
+]
+
+
+class StandardLoggingRoutingDecision(TypedDict, total=False):
+    """Per-request provenance for a complexity-router decision."""
+
+    router_model_name: str
+    router_type: Literal["complexity", "adaptive"]
+    routed_model: str
+    cause: RoutingDecisionCause
+    tier: str
+    score: float
+    signals: List[str]
+    matched_keyword: str
+    escalation_keyword: str
+    classifier_model: str
+    escalated: bool
+    tier_boundaries: StandardLoggingRoutingDecisionTierBoundaries
+
+
+PROMPT_QUOTING_ROUTING_DECISION_FIELDS: FrozenSet[str] = frozenset(
+    {"signals", "matched_keyword", "escalation_keyword"}
+)
+
+
 class StandardLoggingMetadata(StandardLoggingUserAPIKeyMetadata):
     """
     Specific metadata k,v pairs logged to integration for easier cost tracking and prompt management
@@ -2687,6 +2729,7 @@ class StandardLoggingMetadata(StandardLoggingUserAPIKeyMetadata):
     prompt_management_metadata: Optional[StandardLoggingPromptManagementMetadata]
     mcp_tool_call_metadata: Optional[StandardLoggingMCPToolCall]
     vector_store_request_metadata: Optional[List[StandardLoggingVectorStoreRequest]]
+    routing_decision: Optional[StandardLoggingRoutingDecision]
     applied_guardrails: Optional[List[str]]
     usage_object: Optional[dict]
     cold_storage_object_key: Optional[str]  # S3/GCS object key for cold storage retrieval

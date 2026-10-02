@@ -8,7 +8,9 @@ Router cooldown handlers
 
 import asyncio
 import math
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from collections.abc import Mapping
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Final, List, Optional, Union
 
 import litellm
 from litellm._logging import verbose_router_logger
@@ -427,6 +429,25 @@ def _is_allowed_fails_set_on_router(
     if litellm_router_instance.allowed_fails != litellm.allowed_fails:
         return True
     return False
+
+
+def is_caller_timeout_408(
+    model_call_details: Mapping[str, object],
+    exception_status: str | int,
+    ended: datetime | None = None,
+) -> bool:
+    """Return True only for a caller timeout that has actually elapsed."""
+    if cast_exception_status_to_int(exception_status) != 408:
+        return False
+    litellm_params = model_call_details.get("litellm_params")
+    if not isinstance(litellm_params, Mapping) or not litellm_params.get("client_side_timeout"):
+        return False
+    timeout = litellm_params.get("timeout")
+    started = model_call_details.get("api_call_start_time") or model_call_details.get("start_time")
+    finished = ended if ended is not None else model_call_details.get("end_time")
+    if not isinstance(timeout, (int, float)) or not isinstance(started, datetime) or not isinstance(finished, datetime):
+        return False
+    return (finished - started).total_seconds() >= timeout
 
 
 def cast_exception_status_to_int(exception_status: Union[str, int]) -> int:

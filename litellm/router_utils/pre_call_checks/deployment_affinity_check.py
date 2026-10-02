@@ -12,12 +12,15 @@ This is designed to support "implicit prompt caching" scenarios (no explicit cac
 where routing to a consistent deployment is still beneficial.
 """
 
+import asyncio
 import hashlib
+import time
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from typing_extensions import TypedDict
 
 from litellm._logging import verbose_router_logger
+from litellm.constants import SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, Span
 from litellm.responses.utils import ResponsesAPIRequestUtils
@@ -63,6 +66,8 @@ class DeploymentAffinityCheck(CustomLogger):
         self.enable_responses_api_affinity = enable_responses_api_affinity
         self.enable_session_id_affinity = enable_session_id_affinity
         self.model_group_affinity_config: Dict[str, List[str]] = model_group_affinity_config or {}
+        self._local_pin_lock = asyncio.Lock()
+        self._local_pins: Dict[str, Tuple[str, float]] = {}
         for group, flags in self.model_group_affinity_config.items():
             unknown = set(flags) - self.VALID_FLAGS
             if unknown:
@@ -218,8 +223,19 @@ class DeploymentAffinityCheck(CustomLogger):
         return f"{cls.CACHE_KEY_PREFIX}:{model_group}:{hashed_user_key}"
 
     @classmethod
-    def get_session_affinity_cache_key(cls, model_group: str, session_id: str) -> str:
-        return f"{cls.CACHE_KEY_PREFIX}:session:{model_group}:{session_id}"
+    def get_session_affinity_cache_key(
+        cls, model_group: str, session_id: str, user_key: Optional[str] = None
+    ) -> str:
+        scoped_user_key = cls._hash_user_key(user_key) if user_key is not None else "unscoped"
+        return f"{cls.CACHE_KEY_PREFIX}:session:{model_group}:{scoped_user_key}:{session_id}"
+
+    @staticmethod
+    def _get_marker_session_affinity_ttl(request_kwargs: dict) -> Optional[int]:
+        for metadata in DeploymentAffinityCheck._iter_metadata_dicts(request_kwargs):
+            value = metadata.get(SESSION_DEPLOYMENT_AFFINITY_TTL_METADATA_KEY)
+            if isinstance(value, int) and value > 0:
+                return value
+        return None
 
     @staticmethod
     def _get_user_key_from_metadata_dict(metadata: dict) -> Optional[str]:
@@ -334,14 +350,24 @@ class DeploymentAffinityCheck(CustomLogger):
         if stable_model_map_key is None:
             return typed_healthy_deployments
 
-        # 2) Session-id -> deployment affinity
-        if enable_session_id:
+        # 2) Session-id -> deployment affinity. A routing strategy can activate
+        # this for the current request through the internal TTL marker.
+        marker_ttl = self._get_marker_session_affinity_ttl(request_kwargs)
+        if enable_session_id or marker_ttl is not None:
             session_id = self._get_session_id_from_request_kwargs(request_kwargs=request_kwargs)
+            user_key = self._get_user_key_from_request_kwargs(request_kwargs=request_kwargs)
             if session_id is not None:
+                # Keep the session scope identical to the write path. A marker-activated
+                # affinity request is scoped by the authenticated caller as well.
+                session_scope_key = user_key if (enable_session_id or marker_ttl is not None) else None
                 session_cache_key = self.get_session_affinity_cache_key(
-                    model_group=stable_model_map_key, session_id=session_id
+                    model_group=stable_model_map_key, session_id=session_id, user_key=session_scope_key
                 )
                 session_cache_result = await self.cache.async_get_cache(key=session_cache_key)
+                if session_cache_result is None:
+                    # Redis may be unavailable while a pin was claimed locally. Read the
+                    # same process-local fallback before allowing normal routing.
+                    session_cache_result = await self._get_local_pin(session_cache_key)
 
                 session_model_id: Optional[str] = None
                 if isinstance(session_cache_result, dict):
@@ -377,6 +403,8 @@ class DeploymentAffinityCheck(CustomLogger):
 
         cache_key = self.get_affinity_cache_key(model_group=stable_model_map_key, user_key=user_key)
         cache_result = await self.cache.async_get_cache(key=cache_key)
+        if cache_result is None:
+            cache_result = await self._get_local_pin(cache_key)
 
         model_id: Optional[str] = None
         if isinstance(cache_result, dict):
@@ -405,6 +433,61 @@ class DeploymentAffinityCheck(CustomLogger):
             self._shorten_for_logs(user_key),
         )
         return [deployment]
+
+    async def _get_local_pin(self, cache_key: str) -> Optional[str]:
+        async with self._local_pin_lock:
+            current = self._local_pins.get(cache_key)
+            if current is None:
+                return None
+            if current[1] <= time.monotonic():
+                self._local_pins.pop(cache_key, None)
+                return None
+            return current[0]
+
+    async def _claim_pin(self, cache_key: str, pin_value: str, ttl_seconds: int) -> str:
+        redis_cache = getattr(self.cache, "redis_cache", None)
+        # Only DualCache's concrete Redis cache supports the Lua claim path. Generic
+        # cache doubles (and lightweight cache implementations) should use their
+        # normal async_set_cache API instead of mistaking mock attributes for Redis.
+        if isinstance(self.cache, DualCache) and redis_cache is not None:
+            try:
+                if not hasattr(self, "_claim_pin_script"):
+                    self._claim_pin_script = redis_cache.async_register_script(
+                        """
+                        local current = redis.call('GET', KEYS[1])
+                        if current == false then
+                            redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+                            return ARGV[1]
+                        end
+                        if current == ARGV[1] then
+                            redis.call('EXPIRE', KEYS[1], ARGV[2])
+                        end
+                        return current
+                        """
+                    )
+                result = await self._claim_pin_script(
+                    keys=[cache_key], args=[pin_value, int(ttl_seconds)]
+                )
+                return str(result)
+            except Exception as e:
+                verbose_router_logger.debug("DeploymentAffinityCheck: Redis pin claim failed: %s", e)
+
+        # Persist through the cache abstraction for non-Redis caches, then mirror it
+        # locally so a later cache outage can still preserve affinity in this process.
+        try:
+            await self.cache.async_set_cache(cache_key, {"model_id": pin_value}, ttl=ttl_seconds)
+        except Exception as e:
+            verbose_router_logger.debug("DeploymentAffinityCheck: cache pin write failed: %s", e)
+
+        async with self._local_pin_lock:
+            now = time.monotonic()
+            current = self._local_pins.get(cache_key)
+            if current is None or current[1] <= now:
+                self._local_pins[cache_key] = (pin_value, now + ttl_seconds)
+                return pin_value
+            if current[0] == pin_value:
+                self._local_pins[cache_key] = (pin_value, now + ttl_seconds)
+            return current[0]
 
     async def async_pre_call_deployment_hook(
         self, kwargs: Dict[str, Any], call_type: Optional[CallTypes]
@@ -440,15 +523,16 @@ class DeploymentAffinityCheck(CustomLogger):
             enable_session_id,
         ) = self._get_effective_flags(deployment_model_name)
 
-        if not enable_user_key and not enable_session_id:
+        marker_ttl = self._get_marker_session_affinity_ttl(kwargs)
+        session_affinity_active = enable_session_id or marker_ttl is not None
+        if not enable_user_key and not session_affinity_active:
             return None
 
-        user_key = None
-        if enable_user_key:
-            user_key = self._get_user_key_from_request_kwargs(request_kwargs=kwargs)
+        user_key = self._get_user_key_from_request_kwargs(request_kwargs=kwargs)
+        affinity_user_key = user_key if (enable_user_key or marker_ttl is not None) else None
 
         session_id = None
-        if enable_session_id:
+        if session_affinity_active:
             session_id = self._get_session_id_from_request_kwargs(request_kwargs=kwargs)
 
         if user_key is None and session_id is None:
@@ -478,10 +562,10 @@ class DeploymentAffinityCheck(CustomLogger):
         if user_key is not None:
             try:
                 cache_key = self.get_affinity_cache_key(model_group=deployment_model_name, user_key=user_key)
-                await self.cache.async_set_cache(
-                    cache_key,
-                    DeploymentAffinityCacheValue(model_id=str(model_id)),
-                    ttl=self.ttl_seconds,
+                await self._claim_pin(
+                    cache_key=cache_key,
+                    pin_value=str(model_id),
+                    ttl_seconds=self.ttl_seconds,
                 )
 
                 verbose_router_logger.debug(
@@ -500,15 +584,16 @@ class DeploymentAffinityCheck(CustomLogger):
                 )
 
         # Also persist Session-ID affinity if enabled and session-id is provided
+        marker_ttl = self._get_marker_session_affinity_ttl(kwargs)
         if session_id is not None:
             try:
                 session_cache_key = self.get_session_affinity_cache_key(
-                    model_group=deployment_model_name, session_id=session_id
+                    model_group=deployment_model_name, session_id=session_id, user_key=affinity_user_key
                 )
-                await self.cache.async_set_cache(
-                    session_cache_key,
-                    DeploymentAffinityCacheValue(model_id=str(model_id)),
-                    ttl=self.ttl_seconds,
+                await self._claim_pin(
+                    cache_key=session_cache_key,
+                    pin_value=str(model_id),
+                    ttl_seconds=marker_ttl or self.ttl_seconds,
                 )
                 verbose_router_logger.debug(
                     "DeploymentAffinityCheck: set session affinity mapping model_map_key=%s deployment=%s ttl=%s session_id=%s",

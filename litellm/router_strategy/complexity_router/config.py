@@ -328,6 +328,24 @@ class ComplexityRouterConfig(BaseModel):
         default=None,
         description="Configuration for the LLM classifier; required when classifier_type is 'llm'",
     )
+    classifier_context_window_size: int = Field(
+        default=3,
+        ge=0,
+        description="Number of prior conversation turns supplied to the LLM classifier.",
+    )
+    classifier_context_per_turn_chars: int = Field(
+        default=200,
+        gt=0,
+        description="Maximum characters retained from each classifier context turn.",
+    )
+    classifier_context_include_assistant_turns: bool = Field(
+        default=False,
+        description="Include prior assistant turns in the LLM classifier context.",
+    )
+    classifier_tier_rubric: str | None = Field(
+        default=None,
+        description="Optional replacement for the built-in classifier tier definitions.",
+    )
 
     adaptive: bool = Field(
         default=False,
@@ -380,6 +398,15 @@ class ComplexityRouterConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum cosine similarity for a semantic keyword match",
+    )
+
+    # Deployment affinity: pin the selected provider deployment for the session.
+    deployment_affinity: bool = Field(
+        default=True,
+        description=(
+            "When True, advertise the selected deployment for session-level affinity. "
+            "The Router consumes this marker to keep provider prompt caches warm."
+        ),
     )
 
     # Session affinity: pin the first turn's routed model for the rest of the session

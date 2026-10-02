@@ -3330,6 +3330,7 @@ class SpendLogsMetadata(TypedDict):
     max_retries: Optional[int]  # Max retries configured for this request
     cost_breakdown: Optional[CostBreakdown]  # Detailed cost breakdown (input_cost, output_cost, margin, discount, etc.)
     compression_savings: CompressionSavingsMetadata | None
+    routing_decision: Optional[dict]
 
 
 class SpendLogsPayload(TypedDict):
