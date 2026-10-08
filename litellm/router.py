@@ -10477,7 +10477,7 @@ class Router:
         if request_kwargs is not None:
             metadata = request_kwargs.get("metadata") or {}
             litellm_metadata = request_kwargs.get("litellm_metadata") or {}
-            request_team_id = metadata.get("user_api_key_team_id") or litellm_metadata.get("user_api_key_team_id")
+            request_team_id = litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
         # check if aliases set on litellm model alias map
         if specific_deployment is True:
             specific_deployments = filter_model_ownership_scope(
@@ -10521,7 +10521,18 @@ class Router:
             include_team_models=_is_proxy_admin_request(request_kwargs),
         )
         if early is not None:
-            return early
+            early_model, early_deployments = early
+            scoped_deployments = filter_model_ownership_scope(
+                healthy_deployments=early_deployments,
+                request_kwargs=request_kwargs,
+            )
+            if not scoped_deployments:
+                raise litellm.BadRequestError(
+                    message=f"No deployments available for model={early_model} inside the requester's ownership scope",
+                    model=early_model,
+                    llm_provider="",
+                )
+            return early_model, scoped_deployments
 
         ## get healthy deployments
         ### get all deployments

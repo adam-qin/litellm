@@ -11182,9 +11182,28 @@ def _add_team_models_to_all_models(
     """
     Add team models to all models while enforcing immutable model ownership scope.
     """
-    from litellm.proxy.auth.model_scope import team_can_use_model_info
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+        team_can_use_model_info,
+    )
 
     team_models: Dict[str, Set[str]] = {}
+
+    # Orgless deployments are a default grant to eligible teams, even when
+    # the team has an explicit model allowlist. Never widen the grant to
+    # organization teams or models owned by another team.
+    orgless_deployments = [
+        deployment
+        for deployment in llm_router.get_model_list() or []
+        if get_model_scope(deployment.get("model_info", {})) == MODEL_SCOPE_ORGLESS_PROXY_TEAM
+    ]
+    for team_object in team_db_objects_typed:
+        for deployment in orgless_deployments:
+            model_info = deployment.get("model_info", {})
+            model_id = model_info.get("id")
+            if model_id is not None and team_can_use_model_info(model_info, team_object):
+                team_models.setdefault(model_id, set()).add(team_object.team_id)
 
     for team_object in team_db_objects_typed:
         if (
@@ -11407,10 +11426,13 @@ async def _populate_team_access_on_models(
             # scope. This also protects the all-proxy-models sentinel from
             # granting a caller an orgless or another team's DB deployment.
             model_info["direct_access"] = (
-                model_id in direct_access_model_ids
-                and (
-                    get_model_scope(model_info) is None
-                    or bool(model_info.get("access_via_team_ids", []))
+                user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN
+                or (
+                    model_id in direct_access_model_ids
+                    and (
+                        get_model_scope(model_info) is None
+                        or bool(model_info.get("access_via_team_ids", []))
+                    )
                 )
             )
 
@@ -11936,10 +11958,24 @@ async def _gather_team_accessible_model_ids(
     llm_router: Router,
 ) -> Set[str]:
     """Collect model IDs the team can use from router config and DB."""
-    from litellm.proxy.auth.model_scope import team_can_use_model_info
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+        team_can_use_model_info,
+    )
 
     team_accessible_model_ids: Set[str] = set()
     access_groups = llm_router.get_model_access_groups() if llm_router else {}
+    # The default orgless grant also applies to teams with explicit allowlists.
+    for deployment in (llm_router.get_model_list() or []) if llm_router else []:
+        model_info = deployment.get("model_info", {})
+        model_id = model_info.get("id")
+        if (
+            model_id is not None
+            and get_model_scope(model_info) == MODEL_SCOPE_ORGLESS_PROXY_TEAM
+            and team_can_use_model_info(model_info, team_object)
+        ):
+            team_accessible_model_ids.add(model_id)
 
     if not team_object.models or SpecialModelNames.all_proxy_models.value in team_object.models:
         model_list = llm_router.get_model_list() if llm_router else []

@@ -1082,6 +1082,7 @@ async def new_team(
             create_audit_log_for_update,
             general_settings,
             litellm_proxy_admin_name,
+            llm_router,
             prisma_client,
             user_api_key_cache,
         )

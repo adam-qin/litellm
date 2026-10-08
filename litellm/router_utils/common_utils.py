@@ -24,7 +24,7 @@ def _is_proxy_admin_request(request_kwargs: Optional[Mapping[str, object]]) -> b
     litellm_metadata_value = request_kwargs.get("litellm_metadata")
     metadata = metadata_value if isinstance(metadata_value, Mapping) else {}
     litellm_metadata = litellm_metadata_value if isinstance(litellm_metadata_value, Mapping) else {}
-    user_api_key_auth = metadata.get("user_api_key_auth") or litellm_metadata.get("user_api_key_auth")
+    user_api_key_auth = litellm_metadata.get("user_api_key_auth") or metadata.get("user_api_key_auth")
     return _auth_value(user_api_key_auth, "user_role") == "proxy_admin"
 
 
@@ -73,8 +73,8 @@ def filter_model_ownership_scope(
 
     metadata = request_kwargs.get("metadata") or {}
     litellm_metadata = request_kwargs.get("litellm_metadata") or {}
-    request_team_id = metadata.get("user_api_key_team_id") or litellm_metadata.get("user_api_key_team_id")
-    user_api_key_auth = metadata.get("user_api_key_auth") or litellm_metadata.get("user_api_key_auth")
+    request_team_id = litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
+    user_api_key_auth = litellm_metadata.get("user_api_key_auth") or metadata.get("user_api_key_auth")
 
     # A Proxy Admin request without a team context is the global management plane.
     if request_team_id is None and _is_proxy_admin_request(request_kwargs):
@@ -124,7 +124,7 @@ def filter_team_based_models(
 
     metadata = request_kwargs.get("metadata") or {}
     litellm_metadata = request_kwargs.get("litellm_metadata") or {}
-    request_team_id = metadata.get("user_api_key_team_id") or litellm_metadata.get("user_api_key_team_id")
+    request_team_id = litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
     if request_team_id is None and _is_proxy_admin_request(request_kwargs) and isinstance(healthy_deployments, list):
         requested_model = (
             request_kwargs.get("model") or metadata.get("model_group") or litellm_metadata.get("model_group")

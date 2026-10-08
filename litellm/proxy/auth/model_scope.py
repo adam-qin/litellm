@@ -68,7 +68,15 @@ def team_can_use_model_info(model_info: Optional[Dict[str, Any]], team: LiteLLM_
         return model_team_id is not None and model_team_id == team.team_id
 
     if scope == MODEL_SCOPE_ORGLESS_PROXY_TEAM:
-        return normalize_optional_id(team.organization_id) is None and is_proxy_admin_created_team(team)
+        # An unstamped legacy model is not proof of Proxy-Admin ownership.
+        # Keep it visible to Proxy Admin, but deny the default team grant.
+        creator_role = normalized_role((model_info or {}).get(XHUB_CREATOR_ROLE_KEY))
+        return (
+            model_team_id is None
+            and creator_role == LitellmUserRoles.PROXY_ADMIN.value
+            and normalize_optional_id(team.organization_id) is None
+            and is_proxy_admin_created_team(team)
+        )
 
     return False
 

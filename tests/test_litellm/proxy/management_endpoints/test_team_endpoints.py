@@ -382,6 +382,40 @@ async def test_update_team_permissions_success(mock_db_client, mock_admin_auth):
 
 
 @pytest.mark.asyncio
+async def test_new_team_passes_router_to_model_scope_validation(mock_db_client, mock_admin_auth):
+    """Creating a team must pass the live router into ownership validation."""
+    from fastapi import Request
+
+    from litellm.proxy._types import NewTeamRequest
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    mock_db_client.jsonify_team_object = lambda db_data: db_data
+    mock_db_client.db = MagicMock()
+    team_row = MagicMock(team_id="new-team")
+    team_row.model_dump.return_value = {"team_id": "new-team"}
+    mock_db_client.db.litellm_teamtable.count = AsyncMock(return_value=0)
+    mock_db_client.db.litellm_teamtable.create = AsyncMock(return_value=team_row)
+    mock_router = MagicMock()
+
+    with patch("litellm.proxy.proxy_server.llm_router", mock_router), patch(
+        "litellm.proxy.management_endpoints.team_endpoints._validate_team_model_scope_references",
+        new_callable=AsyncMock,
+    ) as mock_validate, patch(
+        "litellm.proxy.management_endpoints.team_endpoints._add_team_members_to_team",
+        new_callable=AsyncMock,
+    ):
+        await new_team(
+            data=NewTeamRequest(team_alias="router-regression-team"),
+            http_request=MagicMock(spec=Request),
+            user_api_key_dict=mock_admin_auth,
+        )
+
+    mock_validate.assert_awaited_once()
+    assert mock_validate.call_args.kwargs["llm_router"] is mock_router
+    mock_db_client.db.litellm_teamtable.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_new_team_with_object_permission(mock_db_client, mock_admin_auth):
     """
     Test that /team/new correctly handles object_permission by:

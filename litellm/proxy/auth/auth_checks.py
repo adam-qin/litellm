@@ -3271,6 +3271,25 @@ async def can_team_access_model(
         team_object=team_object,
         llm_router=llm_router,
     )
+    # Orgless deployments created by Proxy Admin are granted to eligible
+    # teams by default, regardless of an explicit team.models allowlist.
+    # Key, user and member-level restrictions are checked independently.
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+        team_can_use_model_info,
+    )
+
+    if team_object is not None:
+        requested_models = model if isinstance(model, list) else [model]
+        if requested_models and all(
+            any(
+                get_model_scope(deployment.get("model_info", {})) == MODEL_SCOPE_ORGLESS_PROXY_TEAM
+                and team_can_use_model_info(deployment.get("model_info", {}), team_object)
+                for deployment in _router_deployments_for_scope_check(name, llm_router, team_object.team_id))
+            for name in requested_models
+        ):
+            return True
     try:
         return _can_object_call_model(
             model=model,

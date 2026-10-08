@@ -113,6 +113,16 @@ class TestFilterTeamBasedModels:
         result_ids = [d.get("model_info", {}).get("id") for d in result]
         assert sorted(result_ids) == sorted(expected_ids)
 
+    def test_filter_team_based_models_prefers_server_team_context(self, sample_deployments_with_teams):
+        request_kwargs = {
+            "metadata": {"user_api_key_team_id": "team-b"},
+            "litellm_metadata": {"user_api_key_team_id": "team-a"},
+        }
+        result = filter_team_based_models(sample_deployments_with_teams, request_kwargs)
+        assert [item["model_info"]["id"] for item in result] == [
+            "deployment-1", "deployment-3", "deployment-4"
+        ]
+
     def test_filter_team_based_models_no_matching_team(
         self, sample_deployments_with_teams
     ):
@@ -252,6 +262,7 @@ class TestFilterModelOwnershipScope:
                 "id": "orgless",
                 "db_model": True,
                 "xhub_model_scope": "orgless_proxy_team",
+                "xhub_creator_role": "proxy_admin",
             }
         }
         request_kwargs = {
@@ -269,6 +280,7 @@ class TestFilterModelOwnershipScope:
                 "id": "orgless",
                 "db_model": True,
                 "xhub_model_scope": "orgless_proxy_team",
+                "xhub_creator_role": "proxy_admin",
             }
         }
         request_kwargs = {
@@ -282,6 +294,17 @@ class TestFilterModelOwnershipScope:
         }
 
         assert filter_model_ownership_scope(deployment, request_kwargs) == deployment
+
+    def test_server_team_context_overrides_client_metadata(self):
+        deployment = {"model_info": {"id": "private", "team_id": "team-b", "xhub_model_scope": "team_only"}}
+        request_kwargs = {
+            "metadata": {"user_api_key_team_id": "team-b", "user_api_key_auth": {"user_role": "proxy_admin"}},
+            "litellm_metadata": {
+                "user_api_key_team_id": "team-a",
+                "user_api_key_auth": {"user_role": "internal_user"},
+            },
+        }
+        assert filter_model_ownership_scope(deployment, request_kwargs) == []
 
     def test_router_rejects_other_team_model_id(self):
         router = Router(
@@ -312,6 +335,38 @@ class TestFilterModelOwnershipScope:
                 model="team-b-model-id",
                 request_kwargs=request_kwargs,
             )
+
+    def test_same_name_routing_filters_other_team_deployment(self):
+        router = Router(model_list=[
+            {
+                "model_name": "shared", "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-orgless"},
+                "model_info": {"id": "orgless", "db_model": True, "xhub_model_scope": "orgless_proxy_team",
+                               "xhub_creator_role": "proxy_admin"},
+            },
+            {
+                "model_name": "shared", "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-private"},
+                "model_info": {"id": "private", "db_model": True, "team_id": "team-b",
+                               "xhub_model_scope": "team_only"},
+            },
+        ])
+        request_kwargs = {"litellm_metadata": {
+            "user_api_key_team_id": "team-a",
+            "user_api_key_auth": {"team_metadata": {"xhub_created_by_role": "proxy_admin"}},
+        }}
+        _, deployments = router._common_checks_available_deployment(model="shared", request_kwargs=request_kwargs)
+        assert [item["model_info"]["id"] for item in deployments] == ["orgless"]
+
+    def test_early_team_route_enforces_ownership(self):
+        from unittest.mock import patch
+
+        router = Router(model_list=[])
+        private = {"model_info": {"id": "private", "db_model": True, "team_id": "team-b",
+                                  "xhub_model_scope": "team_only"}}
+        request_kwargs = {"litellm_metadata": {"user_api_key_team_id": "team-a"}}
+        with patch.object(router, "_try_early_resolve_deployments_for_model_not_in_names",
+                          return_value=("public", [private])):
+            with pytest.raises(Exception, match="ownership scope"):
+                router._common_checks_available_deployment(model="public", request_kwargs=request_kwargs)
 
     def test_router_allows_same_team_model_id(self):
         router = Router(
