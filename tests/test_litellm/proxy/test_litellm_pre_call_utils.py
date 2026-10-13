@@ -35,6 +35,46 @@ sys.path.insert(
 )  # Adds the parent directory to the system path
 
 
+@pytest.mark.asyncio
+async def test_requester_ip_uses_first_http_x_forwarded_for_value():
+    request = MagicMock(spec=Request)
+    request.headers = Headers({"http_x_forwarded_for": "203.0.113.10, 10.0.0.1"})
+    request.client = MagicMock(host="192.0.2.10")
+
+    data = {"model": "test-model", "messages": []}
+    user_api_key_dict = UserAPIKeyAuth(api_key="test-key")
+
+    await add_litellm_data_to_request(
+        data=data,
+        user_api_key_dict=user_api_key_dict,
+        request=request,
+        proxy_config=MagicMock(),
+        general_settings={},
+    )
+
+    assert data["metadata"]["requester_ip_address"] == "203.0.113.10"
+
+
+@pytest.mark.asyncio
+async def test_requester_ip_falls_back_to_source_ip_when_http_x_forwarded_for_is_blank():
+    request = MagicMock(spec=Request)
+    request.headers = Headers({"http_x_forwarded_for": "   "})
+    request.client = MagicMock(host="192.0.2.10")
+
+    data = {"model": "test-model", "messages": []}
+    user_api_key_dict = UserAPIKeyAuth(api_key="test-key")
+
+    await add_litellm_data_to_request(
+        data=data,
+        user_api_key_dict=user_api_key_dict,
+        request=request,
+        proxy_config=MagicMock(),
+        general_settings={},
+    )
+
+    assert data["metadata"]["requester_ip_address"] == "192.0.2.10"
+
+
 def test_check_if_token_is_service_account():
     """
     Test that only keys with `service_account_id` in metadata are considered service accounts

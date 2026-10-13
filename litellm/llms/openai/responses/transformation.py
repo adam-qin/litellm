@@ -22,6 +22,24 @@ from ..common_utils import OpenAIError
 
 OPENAI_RESPONSES_API_MIN_MAX_OUTPUT_TOKENS = 16
 
+
+def _with_typed_response_payload(parsed_chunk: dict[str, Any]) -> dict[str, Any]:
+    """Normalize nested raw response payloads before constructing stream events."""
+    from litellm.responses.utils import normalize_response_api_usage
+
+    response_payload = parsed_chunk.get("response")
+    if not isinstance(response_payload, dict):
+        return parsed_chunk
+    try:
+        response = ResponsesAPIResponse(**response_payload)
+    except ValidationError:
+        response = ResponsesAPIResponse.model_construct(**response_payload)
+        normalized_usage = normalize_response_api_usage(response.usage)
+        if normalized_usage is not None:
+            response.usage = normalized_usage
+    return {**parsed_chunk, "response": response}
+
+
 if TYPE_CHECKING:
     from litellm.litellm_core_utils.litellm_logging import Logging as _LiteLLMLoggingObj
 
@@ -349,7 +367,7 @@ class OpenAIResponsesAPIConfig(BaseResponsesAPIConfig):
                 event_pydantic_model.__name__,
                 parsed_chunk,
             )
-            return event_pydantic_model.model_construct(**parsed_chunk)
+            return event_pydantic_model.model_construct(**_with_typed_response_payload(parsed_chunk))
 
     @staticmethod
     def get_event_model_class(event_type: str) -> Any:

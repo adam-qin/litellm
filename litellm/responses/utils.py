@@ -6,6 +6,7 @@ from typing import (
     Iterable,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Type,
     Union,
@@ -14,7 +15,7 @@ from typing import (
     overload,
 )
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 import litellm
 from litellm._logging import verbose_logger
@@ -1008,6 +1009,38 @@ class ResponsesAPIRequestUtils:
             oauth2_headers,
             raw_headers_from_request,
         )
+
+
+def normalize_response_api_usage(usage: object) -> ResponseAPIUsage | None:
+    """Coerce a Responses API usage payload to its typed model when possible."""
+    if isinstance(usage, ResponseAPIUsage):
+        return usage
+    if isinstance(usage, Mapping):
+        try:
+            return ResponseAPIUsage(**dict(usage))
+        except ValidationError:
+            return None
+    return None
+
+
+def get_response_api_usage(
+    response: ResponsesAPIResponse | Mapping[str, Any],
+) -> ResponseAPIUsage | None:
+    """Read usage from a typed Responses response or a raw response mapping."""
+    if isinstance(response, Mapping):
+        return normalize_response_api_usage(response.get("usage"))
+    return normalize_response_api_usage(response.usage)
+
+
+def set_response_api_usage(
+    response: ResponsesAPIResponse | MutableMapping[str, Any],
+    usage: ResponseAPIUsage,
+) -> None:
+    """Write usage to a typed Responses response or a raw response mapping."""
+    if isinstance(response, MutableMapping):
+        response["usage"] = usage
+    else:
+        response.usage = usage
 
 
 class ResponseAPILoggingUtils:

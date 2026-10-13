@@ -2627,6 +2627,42 @@ def test_get_assembled_streaming_response_returns_none_for_non_streaming():
     assert assembled is None
 
 
+def test_get_assembled_streaming_response_accepts_raw_dict_response():
+    """Responses API completion events may contain a raw dict response payload."""
+    import datetime
+
+    from litellm.types.llms.openai import ResponseCompletedEvent
+
+    logging_obj = _make_logging_obj(stream=True)
+    result = ResponseCompletedEvent.model_construct(
+        response={
+            "id": "resp-dict",
+            "object": "response",
+            "model": "gpt-5",
+            "output": [],
+            "status": "completed",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+    )
+
+    assembled = logging_obj._get_assembled_streaming_response(
+        result=result,
+        start_time=datetime.datetime.now(),
+        end_time=datetime.datetime.now(),
+        is_async=True,
+        streaming_chunks=[],
+    )
+
+    assert assembled is not None
+    assert assembled.usage["prompt_tokens"] == 10
+    assert assembled.usage["completion_tokens"] == 5
+    assert assembled.usage["total_tokens"] == 15
+
+
 def test_get_assembled_streaming_response_returns_result_for_streaming():
     """Streaming requests should return the ModelResponse for further processing."""
     import datetime

@@ -1705,17 +1705,25 @@ async def add_litellm_data_to_request(
     # Add User-IP Address
     requester_ip_address = ""
     if True:  # Always set the IP Address if available
-        # logic for tracking IP Address
+        # Prefer the first client IP from the upstream HTTP_X_FORWARDED_FOR header.
+        # This header is supplied by the ingress/proxy chain and may contain a
+        # comma-separated list of addresses. If it is absent or blank, retain
+        # the existing configured X-Forwarded-For/source-IP fallback behavior.
+        http_x_forwarded_for = None
+        if request is not None and hasattr(request, "headers"):
+            http_x_forwarded_for = request.headers.get("http_x_forwarded_for")
 
-        # logic for tracking IP Address
-        if (
+        if http_x_forwarded_for and http_x_forwarded_for.strip():
+            requester_ip_address = http_x_forwarded_for.split(",", 1)[0].strip()
+        elif (
             general_settings is not None
             and general_settings.get("use_x_forwarded_for") is True
             and request is not None
             and hasattr(request, "headers")
             and "x-forwarded-for" in request.headers
+            and request.headers["x-forwarded-for"].strip()
         ):
-            requester_ip_address = request.headers["x-forwarded-for"]
+            requester_ip_address = request.headers["x-forwarded-for"].split(",", 1)[0].strip()
         elif (
             request is not None
             and hasattr(request, "client")
