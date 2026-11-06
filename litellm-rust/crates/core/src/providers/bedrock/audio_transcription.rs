@@ -157,11 +157,16 @@ impl AudioTranscriptionProviderConfig for BedrockAudioTranscriptionConfig {
             .ok_or_else(|| {
                 CoreError::InvalidResponse("Bedrock response has no output content".to_string())
             })?;
+        // Do not silently bill a non-text Converse reply as an empty transcript.
+        // The upstream typed Converse response rejects these blocks as well.
         let mut text = String::new();
         for block in content {
-            if let Some(value) = block.get("text").and_then(Value::as_str) {
-                text.push_str(value);
-            }
+            let value = block.get("text").and_then(Value::as_str).ok_or_else(|| {
+                CoreError::InvalidResponse(
+                    "Bedrock response contains non-text transcript content".to_string(),
+                )
+            })?;
+            text.push_str(value);
         }
         Ok(AudioTranscriptionResponseData { text })
     }
@@ -279,6 +284,15 @@ mod tests {
             .expect("response");
         assert_eq!(result.text, "hello world");
         assert_eq!(result.into_json(), json!({"text": "hello world"}));
+    }
+
+    #[test]
+    fn non_text_transcript_content_is_rejected() {
+        let result = BEDROCK_AUDIO_TRANSCRIPTION_CONFIG.transform_transcription_response(
+            "model",
+            json!({"output": {"message": {"content": [{"text": "partial"}, {"image": {}}]}}}),
+        );
+        assert!(matches!(result, Err(CoreError::InvalidResponse(_))));
     }
 
     #[test]

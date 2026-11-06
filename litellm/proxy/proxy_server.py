@@ -493,6 +493,7 @@ from litellm.proxy.middleware.in_flight_requests_middleware import (
     InFlightRequestsMiddleware,
 )
 from litellm.proxy.middleware.prometheus_auth_middleware import PrometheusAuthMiddleware
+from litellm.proxy.middleware.gzip_middleware import GZipBufferedResponseMiddleware
 from litellm.proxy.middleware.request_size_limit_middleware import (
     RequestSizeLimitMiddleware,
 )
@@ -1921,6 +1922,8 @@ app.add_middleware(
 )
 app.add_middleware(InFlightRequestsMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+# Only buffered dashboard GETs are compressed; inference and streaming bypass this.
+app.add_middleware(GZipBufferedResponseMiddleware)
 
 
 def mount_swagger_ui():

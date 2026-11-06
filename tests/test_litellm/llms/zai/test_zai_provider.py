@@ -59,6 +59,8 @@ def test_zai_models_in_model_cost():
     litellm.model_cost = litellm.get_model_cost_map(url="")
 
     zai_models = [
+        "zai/glm-5.1",
+        "zai/glm-4.7-flash",
         "zai/glm-4.7",
         "zai/glm-4.6",
         "zai/glm-4.5",

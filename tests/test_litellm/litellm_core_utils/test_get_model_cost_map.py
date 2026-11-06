@@ -129,6 +129,30 @@ def test_finalize_with_no_block_clears_rules():
         set_fallback_generalizations(previous)
 
 
+@pytest.mark.parametrize(
+    "cost_map",
+    [_load_root_cost_map(), GetModelCostMap.load_local_model_cost_map()],
+    ids=["root", "bundled_backup"],
+)
+def test_select_upstream_1108_models_preserve_xhub_catalog(cost_map: dict):
+    """New entries must work offline without dropping XHub's OpenRouter models."""
+    for model, provider, input_cost, output_cost in [
+        ("claude-sonnet-5-5", "anthropic", 2e-06, 1e-05),
+        ("gemini/gemini-4-argon", "gemini", 2e-06, 1e-05),
+        ("vertex_ai/gemini-4-argon", "vertex_ai", 2e-06, 1e-05),
+    ]:
+        info = cost_map[model]
+        assert info["litellm_provider"] == provider
+        assert info["mode"] == "chat"
+        assert info["input_cost_per_token"] == input_cost
+        assert info["output_cost_per_token"] == output_cost
+        assert info["supports_function_calling"] is True
+    assert any(
+        name.startswith("openrouter/") and entry.get("litellm_provider") == "openrouter"
+        for name, entry in cost_map.items()
+    )
+
+
 def test_shipped_backup_carries_the_claude_routing_rules():
     """The bundled backup must ship the Claude routing rules so a fresh install
     (or an offline fallback) routes unknown Claude models without code changes.
@@ -225,6 +249,15 @@ def test_shipped_backup_marks_claude_4_6_plus_adaptive_not_4_0():
     [_load_root_cost_map(), GetModelCostMap.load_local_model_cost_map()],
     ids=["root", "bundled_backup"],
 )
+def test_zai_catalog_entries_are_available_offline(cost_map: dict):
+    """The primary and bundled maps must expose the same current Z.AI models."""
+    for model in ["zai/glm-5.1", "zai/glm-4.7-flash"]:
+        assert cost_map[model]["litellm_provider"] == "zai"
+        assert cost_map[model]["max_input_tokens"] == 200000
+        assert cost_map[model]["max_output_tokens"] == 128000
+        assert cost_map[model]["supports_reasoning"] is True
+
+
 def test_azure_ai_claude_1m_context_entries(cost_map: dict):
     """Microsoft Foundry serves a 1M-token context window for Opus 4.6+ and Sonnet
     4.6+, so the ``azure_ai`` entries must not advertise the 200k cap that made

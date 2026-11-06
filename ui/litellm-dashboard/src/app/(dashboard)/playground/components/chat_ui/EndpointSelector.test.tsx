@@ -3,6 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import EndpointSelector from "./EndpointSelector";
 import { ENDPOINT_OPTIONS } from "./chatConstants";
+import { EndpointType, getEndpointType } from "@/components/chat_ui/mode_endpoint_mapping";
+
+describe("model mode endpoint selection", () => {
+  it.each([
+    ["image_edit", EndpointType.IMAGE_EDITS],
+    ["image_edits", EndpointType.IMAGE_EDITS],
+    ["realtime", EndpointType.REALTIME],
+  ])("maps %s to its supported endpoint", (mode, endpointType) => {
+    expect(getEndpointType(mode)).toBe(endpointType);
+    expect(ENDPOINT_OPTIONS.some((option) => option.value === endpointType)).toBe(true);
+  });
+
+  it("continues to default unknown modes to chat", () => {
+    expect(getEndpointType("unknown_mode")).toBe(EndpointType.CHAT);
+  });
+});
 
 describe("EndpointSelector", () => {
   Object.values(ENDPOINT_OPTIONS).forEach((endpointType) => {
