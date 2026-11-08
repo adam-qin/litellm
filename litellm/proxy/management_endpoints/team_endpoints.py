@@ -1900,7 +1900,13 @@ async def update_team(
             )
 
         effective_team_data = existing_team_row.model_dump()
-        effective_team_data.update(data.json(exclude_unset=True))
+        # The request contains permission *updates* without an ID, while the
+        # team relation requires a persisted object_permission_id. Keep the
+        # existing relation for model-scope validation; the requested update
+        # is validated and upserted below by handle_update_object_permission.
+        effective_team_data.update(
+            {key: value for key, value in data.json(exclude_unset=True).items() if key != "object_permission"}
+        )
         effective_team_data["organization_id"] = org_id_to_check
         await _validate_team_model_scope_references(
             data=data,

@@ -3183,6 +3183,35 @@ async def can_key_call_resolved_model(
                 object_permission=valid_token.team_object_permission,
             )
 
+    # A Proxy Admin API key is a management credential, not an implicit
+    # inference credential for a team-owned deployment. A team context is
+    # required, after which the ordinary team/member/key checks still apply.
+    if (
+        valid_token.user_role == LitellmUserRoles.PROXY_ADMIN
+        and valid_token.team_id is None
+    ):
+        from litellm.proxy.auth.model_scope import (
+            MODEL_SCOPE_TEAM_ONLY,
+            get_model_scope,
+        )
+
+        requested_deployments = _router_deployments_for_scope_check(
+            model=model,
+            llm_router=llm_router,
+            team_id=None,
+        )
+        if any(
+            get_model_scope(deployment.get("model_info", {}))
+            == MODEL_SCOPE_TEAM_ONLY
+            for deployment in requested_deployments
+        ):
+            raise ProxyException(
+                message="Proxy Admin API keys require a team context to call team-owned models.",
+                type=ProxyErrorTypes.team_model_access_denied,
+                param="model",
+                code=status.HTTP_403_FORBIDDEN,
+            )
+
     _enforce_team_model_scope(
         model=model,
         team_object=team_object,
@@ -3271,22 +3300,21 @@ async def can_team_access_model(
         team_object=team_object,
         llm_router=llm_router,
     )
-    # Orgless deployments created by Proxy Admin are granted to eligible
-    # teams by default, regardless of an explicit team.models allowlist.
-    # Key, user and member-level restrictions are checked independently.
-    from litellm.proxy.auth.model_scope import (
-        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
-        get_model_scope,
-        team_can_use_model_info,
-    )
+    # Unbound models are globally eligible under A1. They still pass through
+    # the normal key, team, project, and member restrictions below.
+    from litellm.proxy.auth.model_scope import MODEL_SCOPE_GLOBAL
 
     if team_object is not None:
         requested_models = model if isinstance(model, list) else [model]
         if requested_models and all(
             any(
-                get_model_scope(deployment.get("model_info", {})) == MODEL_SCOPE_ORGLESS_PROXY_TEAM
-                and team_can_use_model_info(deployment.get("model_info", {}), team_object)
-                for deployment in _router_deployments_for_scope_check(name, llm_router, team_object.team_id))
+                get_model_scope(deployment.get("model_info", {})) == MODEL_SCOPE_GLOBAL
+                for deployment in _router_deployments_for_scope_check(
+                    model=name,
+                    llm_router=llm_router,
+                    team_id=team_object.team_id,
+                )
+            )
             for name in requested_models
         ):
             return True

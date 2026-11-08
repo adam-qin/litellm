@@ -12,6 +12,7 @@ XHUB_TEAM_CREATED_BY_ROLE_KEY = "xhub_created_by_role"
 
 MODEL_SCOPE_ORGLESS_PROXY_TEAM = "orgless_proxy_team"
 MODEL_SCOPE_TEAM_ONLY = "team_only"
+MODEL_SCOPE_GLOBAL = "global"
 
 
 def normalize_optional_id(value: Any) -> Optional[str]:
@@ -34,7 +35,7 @@ def stamp_model_scope(model_info: Any, creator_role: Any) -> None:
     setattr(
         model_info,
         XHUB_MODEL_SCOPE_KEY,
-        MODEL_SCOPE_TEAM_ONLY if team_id is not None else MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        MODEL_SCOPE_TEAM_ONLY if team_id is not None else MODEL_SCOPE_GLOBAL,
     )
     setattr(model_info, XHUB_CREATOR_ROLE_KEY, normalized_role(creator_role))
 
@@ -48,7 +49,8 @@ def get_model_scope(model_info: Optional[Dict[str, Any]]) -> Optional[str]:
     if normalize_optional_id(model_info.get("team_id")) is not None:
         return MODEL_SCOPE_TEAM_ONLY
     if model_info.get("db_model") is True:
-        return MODEL_SCOPE_ORGLESS_PROXY_TEAM
+        # Legacy DB models without an explicit team owner are global under A1.
+        return MODEL_SCOPE_GLOBAL
     return None
 
 
@@ -67,16 +69,11 @@ def team_can_use_model_info(model_info: Optional[Dict[str, Any]], team: LiteLLM_
     if scope == MODEL_SCOPE_TEAM_ONLY:
         return model_team_id is not None and model_team_id == team.team_id
 
-    if scope == MODEL_SCOPE_ORGLESS_PROXY_TEAM:
-        # An unstamped legacy model is not proof of Proxy-Admin ownership.
-        # Keep it visible to Proxy Admin, but deny the default team grant.
-        creator_role = normalized_role((model_info or {}).get(XHUB_CREATOR_ROLE_KEY))
-        return (
-            model_team_id is None
-            and creator_role == LitellmUserRoles.PROXY_ADMIN.value
-            and normalize_optional_id(team.organization_id) is None
-            and is_proxy_admin_created_team(team)
-        )
+    if scope in (MODEL_SCOPE_GLOBAL, MODEL_SCOPE_ORGLESS_PROXY_TEAM):
+        # A1: an unbound model is available to every team. The legacy scope
+        # remains recognized for backward compatibility, but no longer adds
+        # an organization or creator-role restriction.
+        return model_team_id is None
 
     return False
 

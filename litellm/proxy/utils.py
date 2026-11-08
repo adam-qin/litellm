@@ -6383,8 +6383,20 @@ async def get_available_models_for_user(
     # Get team models
     team_models: List[str] = user_api_key_dict.team_models
 
-    # If specific team_id is provided, validate and get team models
-    if team_id and prisma_client and proxy_logging_obj and user_api_key_cache:
+    # A caller-supplied team_id must never become a listing scope without
+    # membership validation. In particular, do not silently fall back to the
+    # key's cached model list when a required dependency is unavailable.
+    if team_id:
+        if user_api_key_dict.team_id and team_id != user_api_key_dict.team_id:
+            from fastapi import HTTPException
+            from litellm.proxy._types import LitellmUserRoles
+
+            if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+                raise HTTPException(status_code=403, detail="Key cannot select another team")
+        if prisma_client is None or proxy_logging_obj is None or user_api_key_cache is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=503, detail="Team scope validation unavailable")
         key_models = []
         team_object = await get_team_object(
             team_id=team_id,

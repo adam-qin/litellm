@@ -291,12 +291,15 @@ ui:
     limits:
       cpu: "1"
       memory: 1Gi
+  # Probe the same static-export health endpoint used by the ingress. The
+  # root page alone is not sufficient: an nginx process can return index.html
+  # while the UI asset tree is unavailable to browser requests.
   livenessProbe:
-    httpGet: { path: /, port: http }
+    httpGet: { path: /healthz, port: http }
     initialDelaySeconds: 5
     periodSeconds: 20
   readinessProbe:
-    httpGet: { path: /, port: http }
+    httpGet: { path: /healthz, port: http }
     initialDelaySeconds: 2
     periodSeconds: 10
   hpa:

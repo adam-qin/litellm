@@ -9937,6 +9937,109 @@ async def _drive_team_write(
         return result, pc.db.litellm_teamtable.update
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["post", "patch"])
+@pytest.mark.parametrize("existing_permission_id", [None, "persisted-permission"])
+async def test_team_settings_permission_update_keeps_model_scope_validation(
+    kind, existing_permission_id
+):
+    """Permission updates lack a DB ID; scope validation must use the old relation."""
+    from litellm.proxy._types import LiteLLM_ObjectPermissionTable
+
+    existing_permission = (
+        LiteLLM_ObjectPermissionTable(
+            object_permission_id=existing_permission_id,
+            mcp_servers=["existing-server"],
+        )
+        if existing_permission_id
+        else None
+    )
+    observed = []
+
+    async def validate_scope(*, data, team, prisma_client, llm_router):
+        observed.append(team)
+        assert team.models == ["allowed-model"]
+        assert team.object_permission == existing_permission
+
+    async def persist_permission(*, data_json, existing_team_row):
+        assert existing_team_row.object_permission_id == existing_permission_id
+        assert data_json.pop("object_permission")["mcp_servers"] == []
+        data_json["object_permission_id"] = "updated-permission"
+        return data_json
+
+    with (
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints._validate_team_model_scope_references",
+            new=validate_scope,
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints.handle_update_object_permission",
+            new=persist_permission,
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints.enforce_all_proxy_mcp_servers_grant_is_admin_only",
+            new=AsyncMock(),
+        ),
+    ):
+        _, update_mock = await _drive_team_write(
+            kind,
+            existing_kwargs={
+                "models": ["allowed-model"],
+                "object_permission_id": existing_permission_id,
+                "object_permission": existing_permission,
+            },
+            payload={
+                "object_permission": {
+                    "mcp_servers": [],
+                    "mcp_access_groups": [],
+                    "mcp_tool_permissions": {},
+                    "mcp_toolsets": [],
+                }
+            },
+        )
+
+    assert len(observed) == 1
+    written = update_mock.call_args.kwargs["data"]
+    assert written["object_permission_id"] == "updated-permission"
+    assert "object_permission" not in written
+
+
+@pytest.mark.asyncio
+async def test_team_settings_permission_update_rejects_out_of_scope_models():
+    """Permission changes must not bypass the existing model ownership gate."""
+
+    async def reject_scope(*, data, team, prisma_client, llm_router):
+        assert team.object_permission is None
+        assert team.models == ["other-team-model"]
+        raise HTTPException(status_code=403, detail="out of scope")
+
+    persist_permission = AsyncMock()
+    with (
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints._validate_team_model_scope_references",
+            new=reject_scope,
+        ),
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints.handle_update_object_permission",
+            new=persist_permission,
+        ),
+    ):
+        with pytest.raises((HTTPException, ProxyException)) as exc_info:
+            await _drive_team_write(
+                "post",
+                existing_kwargs={"models": ["allowed-model"]},
+                payload={
+                    "models": ["other-team-model"],
+                    "object_permission": {"mcp_servers": [], "mcp_toolsets": []},
+                },
+            )
+
+    assert getattr(exc_info.value, "status_code", None) == 403 or str(
+        getattr(exc_info.value, "code", "")
+    ) == "403"
+    persist_permission.assert_not_awaited()
+
+
 async def _written_metadata(kind, existing_metadata, body):
     _, update_mock = await _drive_team_write(kind, existing_metadata=existing_metadata, payload=body)
     written = update_mock.call_args.kwargs["data"]

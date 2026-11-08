@@ -32,6 +32,14 @@ RUN rm -f /etc/nginx/conf.d/default.conf
 # Static export → web root.
 COPY --from=builder /app/out /usr/share/nginx/html
 
+# Make readiness fail closed if a later volume mount replaces the export with
+# an empty or partial directory. The marker is created only after the build
+# output has been copied into the runtime image.
+RUN test -f /usr/share/nginx/html/index.html \
+    && test -d /usr/share/nginx/html/_next \
+    && find /usr/share/nginx/html/_next -type f -print -quit | grep -q . \
+    && touch /usr/share/nginx/html/.litellm_ui_ready
+
 # Routing rules — see ui/nginx.conf for the full description.
 COPY ui/nginx.conf /etc/nginx/nginx.conf
 

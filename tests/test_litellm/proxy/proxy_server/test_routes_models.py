@@ -9,7 +9,7 @@ Pins (PR2):
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -106,6 +106,94 @@ def test_get_models_invalid_scope_returns_400(client, auth_as, patched_models, p
         response = client.get(path, params={"scope": "not-a-real-scope"})
     assert response.status_code == 400
     assert "Invalid scope parameter" in str(response.json())
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/models"])
+def test_model_list_omits_models_denied_by_inference(client, auth_as, patched_models, monkeypatch, path):
+    from litellm.proxy._types import LitellmUserRoles, ProxyErrorTypes, ProxyException
+    from litellm.proxy.auth import auth_checks
+
+    async def check_model(*, model, valid_token, **kwargs):
+        if model == "gpt-4":
+            raise ProxyException(
+                message="Team is outside the model ownership scope.",
+                type=ProxyErrorTypes.team_model_access_denied,
+                param="model",
+                code=403,
+            )
+
+    check = AsyncMock(side_effect=check_model)
+    monkeypatch.setattr(auth_checks, "can_key_call_resolved_model", check)
+    with auth_as(LitellmUserRoles.INTERNAL_USER, team_id="team-a"):
+        response = client.get(path)
+    assert response.status_code == 200
+    assert [entry["id"] for entry in response.json()["data"]] == ["claude-sonnet"]
+    assert [call.kwargs["model"] for call in check.await_args_list] == ["gpt-4", "claude-sonnet"]
+
+
+@pytest.mark.parametrize("path", ["/v1/models/gpt-4", "/models/gpt-4"])
+def test_model_info_hides_model_denied_by_inference(client, auth_as, patched_models, monkeypatch, path):
+    from litellm.proxy import utils as proxy_utils
+    from litellm.proxy._types import LitellmUserRoles, ProxyErrorTypes, ProxyException
+    from litellm.proxy.auth import auth_checks
+
+    def validate_model(*, model_id, available_models):
+        if model_id not in available_models:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Model not found")
+
+    monkeypatch.setattr(proxy_utils, "validate_model_access", validate_model)
+
+    async def check_model(*, model, **kwargs):
+        if model == "gpt-4":
+            raise ProxyException(
+                message="Team is outside the model ownership scope.",
+                type=ProxyErrorTypes.team_model_access_denied,
+                param="model",
+                code=403,
+            )
+
+    monkeypatch.setattr(auth_checks, "can_key_call_resolved_model", AsyncMock(side_effect=check_model))
+    with auth_as(LitellmUserRoles.INTERNAL_USER, team_id="team-a"):
+        response = client.get(path)
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_explicit_team_id_rejects_other_team_even_with_cached_models():
+    from fastapi import HTTPException
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.proxy.utils import get_available_models_for_user
+
+    key = UserAPIKeyAuth(api_key="sk-test-key", team_id="team-a", team_models=[])
+    with pytest.raises(HTTPException) as exc:
+        await get_available_models_for_user(
+            user_api_key_dict=key,
+            llm_router=None,
+            general_settings={},
+            user_model=None,
+            team_id="team-b",
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_explicit_team_id_fails_closed_without_validation_dependencies():
+    from fastapi import HTTPException
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.proxy.utils import get_available_models_for_user
+
+    key = UserAPIKeyAuth(api_key="sk-test-key", team_id="team-a", team_models=[])
+    with pytest.raises(HTTPException) as exc:
+        await get_available_models_for_user(
+            user_api_key_dict=key,
+            llm_router=None,
+            general_settings={},
+            user_model=None,
+            team_id="team-a",
+        )
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.parametrize("path", ["/v1/models/gpt-4", "/models/gpt-4"])

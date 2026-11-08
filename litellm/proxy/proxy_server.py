@@ -1612,9 +1612,21 @@ try:
         if not os.path.exists(os.path.join(ui_path, "index.html")):
             return False
 
-        # Must have _next directory with Next.js assets
+        # Must have _next directory with at least one generated asset. A
+        # directory created by an emptyDir mount can otherwise make the proxy
+        # start successfully while every browser bundle is unavailable.
         next_dir = os.path.join(ui_path, "_next")
         if not os.path.isdir(next_dir):
+            return False
+        try:
+            if not any(
+                entry.is_file()
+                for current_root, _, filenames in os.walk(next_dir)
+                for entry in (os.path.join(current_root, filename) for filename in filenames)
+                if os.path.isfile(entry)
+            ):
+                return False
+        except (OSError, PermissionError):
             return False
 
         return True
@@ -8697,6 +8709,28 @@ class ProxyStartupEvent:
 
 
 #### API ENDPOINTS ####
+async def _models_callable_by_key(
+    models: List[str], user_api_key_dict: UserAPIKeyAuth, llm_router: Optional[Router]
+) -> List[str]:
+    """Filter public model names using inference's resolved-model authorization."""
+    from litellm.proxy.auth.auth_checks import can_key_call_resolved_model
+    from litellm.proxy._types import ProxyException
+
+    callable_models: List[str] = []
+    for model in models:
+        try:
+            await can_key_call_resolved_model(
+                model=model,
+                llm_model_list=None,
+                valid_token=user_api_key_dict,
+                llm_router=llm_router,
+            )
+        except ProxyException:
+            continue
+        callable_models.append(model)
+    return callable_models
+
+
 @router.get("/v1/models", dependencies=[Depends(user_api_key_auth)], tags=["model management"])
 @router.get(
     "/models", dependencies=[Depends(user_api_key_auth)], tags=["model management"]
@@ -8853,6 +8887,12 @@ async def model_list(
     if hidden_names:
         all_models = [m for m in all_models if m not in hidden_names]
 
+    # Model-name allowlists alone do not account for deployment ownership. Use
+    # the same resolved-model authorization as inference before advertising a
+    # model to a virtual key; an inaccessible model must not appear selectable.
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+        all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
+
     # Surface the public team name by default; legacy internal keys via flag.
     # The internal routing key drives the metadata/fallback lookup, while the
     # public name is what the client sees as the model id.
@@ -8927,8 +8967,10 @@ async def model_info(
         user_api_key_cache=user_api_key_cache,
     )
 
-    # Mirror /v1/models' visibility filter so first-occurrence resolution
-    # cannot land on a deployment the listing had hidden.
+    # Mirror /v1/models' inference authorization as well as its visibility
+    # filter; a direct model lookup must not reveal an uncallable model.
+    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+        all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
     blocked_names = llm_router.get_fully_blocked_model_names() if llm_router is not None else set()
     unhealthy_names: set[str] = set()
     if healthy_only and llm_router is not None:

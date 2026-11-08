@@ -513,6 +513,75 @@ def test_team_scope_check_uses_team_scoped_candidates_for_duplicate_model_names(
     )
 
 
+def test_team_scope_check_allows_unbound_model_for_any_team():
+    from litellm import Router
+    from litellm.proxy.auth.auth_checks import _enforce_team_model_scope
+
+    router = Router(
+        model_list=[
+            {
+                "model_name": "global-model",
+                "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-global"},
+                "model_info": {
+                    "id": "global-model",
+                    "db_model": True,
+                    "xhub_model_scope": "global",
+                },
+            }
+        ]
+    )
+
+    _enforce_team_model_scope(
+        model="global-model",
+        team_object=LiteLLM_TeamTable(team_id="team-a", organization_id="org-a"),
+        llm_router=router,
+    )
+    _enforce_team_model_scope(
+        model="global-model",
+        team_object=LiteLLM_TeamTable(team_id="team-b", organization_id="org-b"),
+        llm_router=router,
+    )
+
+
+@pytest.mark.asyncio
+async def test_proxy_admin_key_without_team_cannot_call_team_owned_model():
+    from litellm import Router
+    from litellm.proxy.auth.auth_checks import can_key_call_resolved_model
+
+    router = Router(
+        model_list=[
+            {
+                "model_name": "team-a-model",
+                "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-team-a"},
+                "model_info": {
+                    "id": "team-a-model",
+                    "db_model": True,
+                    "team_id": "team-a",
+                    "xhub_model_scope": "team_only",
+                },
+            }
+        ]
+    )
+    valid_token = UserAPIKeyAuth(
+        api_key="sk-admin",
+        user_role=LitellmUserRoles.PROXY_ADMIN,
+        models=["team-a-model"],
+        team_id=None,
+    )
+
+    with patch("litellm.proxy.proxy_server.prisma_client", None):
+        with patch("litellm.proxy.proxy_server.proxy_logging_obj", None):
+            with patch("litellm.proxy.proxy_server.user_api_key_cache", None):
+                with pytest.raises(ProxyException) as exc_info:
+                    await can_key_call_resolved_model(
+                        model="team-a-model",
+                        llm_model_list=None,
+                        valid_token=valid_token,
+                        llm_router=router,
+                    )
+    assert exc_info.value.type == ProxyErrorTypes.team_model_access_denied
+
+
 def test_team_scope_check_rejects_other_team_model_id():
     from litellm import Router
     from litellm.proxy.auth.auth_checks import _enforce_team_model_scope
