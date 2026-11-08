@@ -553,6 +553,25 @@ def test_sso_key_generate_shows_deprecation_banner(client_no_auth, monkeypatch):
     assert "Deprecated:" in html
 
 
+def test_validate_ui_directory_requires_a_real_next_asset(tmp_path):
+    from litellm.proxy import proxy_server
+
+    ui_root = tmp_path / "ui"
+    ui_root.mkdir()
+    assert proxy_server._validate_ui_directory(str(ui_root)) is False
+
+    (ui_root / "index.html").write_text("index")
+    assert proxy_server._validate_ui_directory(str(ui_root)) is False
+
+    next_dir = ui_root / "_next"
+    next_dir.mkdir()
+    (next_dir / "static").mkdir()
+    assert proxy_server._validate_ui_directory(str(ui_root)) is False
+
+    (next_dir / "static" / "bundle.js").write_text("console.log('ok')")
+    assert proxy_server._validate_ui_directory(str(ui_root)) is True
+
+
 def test_restructure_ui_html_files_handles_nested_routes(tmp_path):
     """
     Test that _restructure_ui_html_files correctly restructures HTML files.

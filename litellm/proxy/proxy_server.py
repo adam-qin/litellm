@@ -1601,7 +1601,7 @@ try:
         Checks for:
         - Directory exists
         - Has index.html (main entry point)
-        - Has _next directory (Next.js assets)
+        - Has _next directory containing at least one Next.js asset
 
         Returns True if UI directory appears valid and servable.
         """
@@ -1620,10 +1620,9 @@ try:
             return False
         try:
             if not any(
-                entry.is_file()
+                os.path.isfile(os.path.join(current_root, filename))
                 for current_root, _, filenames in os.walk(next_dir)
-                for entry in (os.path.join(current_root, filename) for filename in filenames)
-                if os.path.isfile(entry)
+                for filename in filenames
             ):
                 return False
         except (OSError, PermissionError):
@@ -1890,7 +1889,7 @@ try:
         verbose_proxy_logger.exception(f"Error while restructuring UI directory {ui_path}: {e}")
 
 except Exception:
-    pass
+    verbose_proxy_logger.exception("Failed to initialize the Admin UI; /ui routes may be unavailable")
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # ui_path = os.path.join(current_dir, "_experimental", "out")
 # # Mount this test directory instead
