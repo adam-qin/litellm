@@ -625,11 +625,16 @@ async def _update_team_model_in_db(
         db_model=db_model,
     )
 
-    # Ensure model_info exists and set team_public_model_name
+    # Ensure model_info exists, then synchronize the immutable ownership scope
+    # with the explicit team assignment. This prevents a legacy
+    # ``orgless_proxy_team`` marker from rejecting the newly assigned team.
     if patch_data.model_info is None:
         from litellm.types.router import ModelInfo
 
         patch_data.model_info = ModelInfo()
+    from litellm.proxy.auth.model_scope import sync_model_scope_for_team_assignment
+
+    sync_model_scope_for_team_assignment(patch_data.model_info, patch_team_id)
     patch_data.model_info.team_public_model_name = public_model_name
 
     # Check if team assignment is new or changed
@@ -770,6 +775,9 @@ async def _clear_team_model_assignment(
         info = json.loads(info_raw) if isinstance(info_raw, str) else dict(info_raw)
         info.pop("team_id", None)
         info.pop("team_public_model_name", None)
+        from litellm.proxy.auth.model_scope import XHUB_MODEL_SCOPE_KEY, MODEL_SCOPE_GLOBAL
+
+        info[XHUB_MODEL_SCOPE_KEY] = MODEL_SCOPE_GLOBAL
         result["model_info"] = json.dumps(info)
     return result
 

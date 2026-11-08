@@ -5,8 +5,10 @@ import pytest
 from litellm.models.team import LiteLLM_TeamTable
 from litellm.proxy._types import LiteLLM_UserTable, LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.model_scope import (
+    MODEL_SCOPE_GLOBAL,
     MODEL_SCOPE_ORGLESS_PROXY_TEAM,
     MODEL_SCOPE_TEAM_ONLY,
+    sync_model_scope_for_team_assignment,
     XHUB_MODEL_SCOPE_KEY,
     XHUB_CREATOR_ROLE_KEY,
     XHUB_TEAM_CREATED_BY_ROLE_KEY,
@@ -75,6 +77,30 @@ def test_team_id_alone_is_always_team_only():
     assert get_model_scope(model_info) == MODEL_SCOPE_TEAM_ONLY
     assert team_can_use_model_info(model_info, _team("team-a")) is True
     assert team_can_use_model_info(model_info, _team("team-b")) is False
+
+
+def test_explicit_team_assignment_repairs_legacy_scope_marker():
+    from types import SimpleNamespace
+
+    model_info = SimpleNamespace(team_id="old-team", xhub_model_scope=MODEL_SCOPE_ORGLESS_PROXY_TEAM)
+    sync_model_scope_for_team_assignment(model_info, "team-a")
+
+    assert model_info.team_id == "team-a"
+    assert model_info.xhub_model_scope == MODEL_SCOPE_TEAM_ONLY
+    assert get_model_scope(model_info.__dict__) == MODEL_SCOPE_TEAM_ONLY
+    assert team_can_use_model_info(model_info.__dict__, _team("team-a")) is True
+    assert team_can_use_model_info(model_info.__dict__, _team("team-b")) is False
+
+
+def test_explicit_unassignment_repairs_scope_to_global():
+    from types import SimpleNamespace
+
+    model_info = SimpleNamespace(team_id="team-a", xhub_model_scope=MODEL_SCOPE_TEAM_ONLY)
+    sync_model_scope_for_team_assignment(model_info, None)
+
+    assert model_info.team_id is None
+    assert model_info.xhub_model_scope == MODEL_SCOPE_GLOBAL
+    assert get_model_scope(model_info.__dict__) == MODEL_SCOPE_GLOBAL
 
 
 def _deployments():

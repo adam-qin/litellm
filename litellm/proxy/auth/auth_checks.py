@@ -3302,7 +3302,7 @@ async def can_team_access_model(
     )
     # Unbound models are globally eligible under A1. They still pass through
     # the normal key, team, project, and member restrictions below.
-    from litellm.proxy.auth.model_scope import MODEL_SCOPE_GLOBAL
+    from litellm.proxy.auth.model_scope import MODEL_SCOPE_GLOBAL, get_model_scope
 
     if team_object is not None:
         requested_models = model if isinstance(model, list) else [model]

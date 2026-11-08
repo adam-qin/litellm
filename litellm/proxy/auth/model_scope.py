@@ -40,6 +40,17 @@ def stamp_model_scope(model_info: Any, creator_role: Any) -> None:
     setattr(model_info, XHUB_CREATOR_ROLE_KEY, normalized_role(creator_role))
 
 
+def sync_model_scope_for_team_assignment(model_info: Any, team_id: Any) -> None:
+    """Keep the persisted scope aligned with an explicit team assignment."""
+    normalized_team_id = normalize_optional_id(team_id)
+    setattr(model_info, "team_id", normalized_team_id)
+    setattr(
+        model_info,
+        XHUB_MODEL_SCOPE_KEY,
+        MODEL_SCOPE_TEAM_ONLY if normalized_team_id is not None else MODEL_SCOPE_GLOBAL,
+    )
+
+
 def get_model_scope(model_info: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(model_info, dict):
         return None
