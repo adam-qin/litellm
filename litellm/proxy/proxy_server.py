@@ -8708,6 +8708,25 @@ class ProxyStartupEvent:
 
 
 #### API ENDPOINTS ####
+def _team_owned_model_candidates(
+    models: List[str], user_api_key_dict: UserAPIKeyAuth, llm_router: Optional[Router]
+) -> List[str]:
+    """Add the bound team's public model names before inference authorization."""
+    if not user_api_key_dict.team_id or llm_router is None:
+        return models
+    from litellm.proxy.auth.model_scope import MODEL_SCOPE_TEAM_ONLY, get_model_scope
+
+    candidates = list(models)
+    for deployment in llm_router.get_model_list() or []:
+        info = deployment.get("model_info") or {}
+        if info.get("team_id") != user_api_key_dict.team_id or get_model_scope(info) != MODEL_SCOPE_TEAM_ONLY:
+            continue
+        public_name = info.get("team_public_model_name") or deployment.get("model_name")
+        if isinstance(public_name, str) and public_name and public_name not in candidates:
+            candidates.append(public_name)
+    return candidates
+
+
 async def _models_callable_by_key(
     models: List[str], user_api_key_dict: UserAPIKeyAuth, llm_router: Optional[Router]
 ) -> List[str]:
@@ -8779,12 +8798,24 @@ async def model_list(
         get_available_models_for_user,
     )
 
-    # Validate scope parameter if provided
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+
+    # A virtual key's administrative role must not let a caller choose another
+    # team's model-list scope. Only the actual master credential may do so.
+    is_master_credential = user_api_key_dict.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS
+    if team_id and not is_master_credential:
+        if not user_api_key_dict.team_id or team_id != user_api_key_dict.team_id:
+            raise HTTPException(status_code=403, detail="Key cannot select another team")
+    # Validate scope parameter before applying authorization semantics.
     if scope is not None and scope != "expand":
         raise HTTPException(
             status_code=400,
             detail=f"Invalid scope parameter. Only 'expand' is currently supported. Received: {scope}",
         )
+    if scope == "expand" and not is_master_credential:
+        # Administrative UI permissions must not expand a virtual key's
+        # inference model listing beyond its own authorization context.
+        scope = None
 
     # Check if scope=expand is requested and user has admin privileges
     should_expand_scope = False
@@ -8882,6 +8913,11 @@ async def model_list(
         user_api_key_cache=user_api_key_cache,
     )
 
+    # Candidate names alone are not grants: resolved inference authorization
+    # below still checks key, team, project and deployment ownership.
+    if not is_master_credential:
+        all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
+
     # Hide paused/unhealthy models from the public listing
     if hidden_names:
         all_models = [m for m in all_models if m not in hidden_names]
@@ -8889,7 +8925,7 @@ async def model_list(
     # Model-name allowlists alone do not account for deployment ownership. Use
     # the same resolved-model authorization as inference before advertising a
     # model to a virtual key; an inaccessible model must not appear selectable.
-    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+    if not is_master_credential:
         all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
 
     # Surface the public team name by default; legacy internal keys via flag.
@@ -8966,9 +9002,11 @@ async def model_info(
         user_api_key_cache=user_api_key_cache,
     )
 
-    # Mirror /v1/models' inference authorization as well as its visibility
-    # filter; a direct model lookup must not reveal an uncallable model.
-    if user_api_key_dict.user_role != LitellmUserRoles.PROXY_ADMIN:
+    # Mirror /v1/models' candidate and inference authorization paths.
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+
+    if user_api_key_dict.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS:
+        all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
         all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
     blocked_names = llm_router.get_fully_blocked_model_names() if llm_router is not None else set()
     unhealthy_names: set[str] = set()

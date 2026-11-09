@@ -131,6 +131,78 @@ def test_model_list_omits_models_denied_by_inference(client, auth_as, patched_mo
     assert [call.kwargs["model"] for call in check.await_args_list] == ["gpt-4", "claude-sonnet"]
 
 
+@pytest.mark.parametrize("path", ["/v1/models", "/models"])
+def test_model_list_rejects_cross_team_query_for_admin_role_virtual_key(client, auth_as, patched_models, path):
+    from litellm.proxy._types import LitellmUserRoles
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN, team_id="team-a"):
+        response = client.get(path, params={"team_id": "team-b"})
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/models"])
+def test_model_list_expand_does_not_bypass_virtual_key_scope(
+    client, auth_as, patched_models, monkeypatch, path
+):
+    from litellm.proxy._types import LitellmUserRoles, ProxyErrorTypes, ProxyException
+    from litellm.proxy.auth import auth_checks
+
+    async def deny_model(*, model, **kwargs):
+        if model == "gpt-4":
+            raise ProxyException(
+                message="not allowed", type=ProxyErrorTypes.team_model_access_denied,
+                param="model", code=403,
+            )
+
+    monkeypatch.setattr(auth_checks, "can_key_call_resolved_model", AsyncMock(side_effect=deny_model))
+    with auth_as(LitellmUserRoles.PROXY_ADMIN, team_id="team-a"):
+        response = client.get(path, params={"scope": "expand"})
+    assert response.status_code == 200
+    assert "gpt-4" not in [entry["id"] for entry in response.json()["data"]]
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/models"])
+def test_model_list_rejects_unbound_virtual_key_team_query(client, auth_as, patched_models, path):
+    from litellm.proxy._types import LitellmUserRoles
+
+    with auth_as(LitellmUserRoles.PROXY_ADMIN):
+        response = client.get(path, params={"team_id": "team-a"})
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/models"])
+def test_model_list_includes_own_team_public_model_only_when_callable(
+    client, auth_as, patched_models, monkeypatch, path
+):
+    from litellm.proxy._types import LitellmUserRoles, ProxyErrorTypes, ProxyException
+    from litellm.proxy.auth import auth_checks
+
+    patched_models.get_model_list.return_value = [
+        {"model_name": "gpt-team-a", "model_info": {
+            "team_id": "team-a", "xhub_model_scope": "team_only", "team_public_model_name": "gpt-team-a"
+        }},
+        {"model_name": "gpt-team-b", "model_info": {
+            "team_id": "team-b", "xhub_model_scope": "team_only", "team_public_model_name": "gpt-team-b"
+        }},
+    ]
+
+    async def check_model(*, model, **kwargs):
+        if model == "gpt-4":
+            raise ProxyException(
+                message="not allowed", type=ProxyErrorTypes.team_model_access_denied,
+                param="model", code=403,
+            )
+
+    monkeypatch.setattr(auth_checks, "can_key_call_resolved_model", AsyncMock(side_effect=check_model))
+    with auth_as(LitellmUserRoles.INTERNAL_USER, team_id="team-a"):
+        response = client.get(path)
+    assert response.status_code == 200
+    names = [entry["id"] for entry in response.json()["data"]]
+    assert "gpt-team-a" in names
+    assert "gpt-team-b" not in names
+    assert "gpt-4" not in names
+
+
 @pytest.mark.parametrize("path", ["/v1/models/gpt-4", "/models/gpt-4"])
 def test_model_info_hides_model_denied_by_inference(client, auth_as, patched_models, monkeypatch, path):
     from litellm.proxy import utils as proxy_utils
