@@ -33,7 +33,6 @@ const defaultProps = {
   token: "test-token",
   userRole: "Admin",
   userID: "user-1",
-  premiumUser: false,
 };
 
 describe("SpendLogsTable", () => {

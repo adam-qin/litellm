@@ -460,6 +460,9 @@ from litellm.proxy.management_endpoints.user_agent_analytics_endpoints import (
 from litellm.proxy.management_endpoints.workflow_management_endpoints import (
     router as workflow_management_router,
 )
+from litellm.proxy.management_endpoints.xhub_audit_log_endpoints import (
+    router as xhub_audit_log_router,
+)
 from litellm.proxy.management_helpers.audit_logs import (
     create_audit_log_for_update,
     create_object_audit_log,
@@ -16842,6 +16845,7 @@ app.include_router(model_management_router)
 app.include_router(model_access_group_management_router)
 app.include_router(tag_management_router)
 app.include_router(workflow_management_router)
+app.include_router(xhub_audit_log_router)
 app.include_router(memory_router)
 app.include_router(plugin_router)
 app.include_router(cost_tracking_settings_router)

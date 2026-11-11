@@ -4,14 +4,13 @@ import SpendLogsTable from "@/components/view_logs";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 
 export default function Logs() {
-  const { accessToken, userRole, userId, token, premiumUser } = useAuthorized();
+  const { accessToken, userRole, userId, token } = useAuthorized();
   return (
     <SpendLogsTable
       userID={userId}
       userRole={userRole}
       token={token}
       accessToken={accessToken}
-      premiumUser={premiumUser}
     />
   );
 }

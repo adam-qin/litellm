@@ -203,18 +203,24 @@ async def create_audit_log_for_update(request_data: LiteLLM_AuditLogs):
     if _store_audit_logs is not True:
         return
 
-    from litellm.proxy.proxy_server import premium_user, prisma_client
+    from litellm.proxy.proxy_server import prisma_client
 
-    if premium_user is not True:
-        return
+    # XHub owns this audit-log persistence path; it is controlled by the
+    # existing store_audit_logs / LITELLM_STORE_AUDIT_LOGS switch, not by the
+    # optional Enterprise license state.
+    verbose_proxy_logger.debug("creating audit log id=%s", request_data.id)
 
-    verbose_proxy_logger.debug("creating audit log for %s", request_data)
+    # Sanitize before both external callbacks and database persistence.
+    from litellm.proxy.management_endpoints.xhub_audit_log_endpoints import (
+        _safe_key_hash,
+        _sanitize_value,
+    )
 
-    if isinstance(request_data.updated_values, dict):
-        request_data.updated_values = json.dumps(request_data.updated_values)
-
-    if isinstance(request_data.before_value, dict):
-        request_data.before_value = json.dumps(request_data.before_value)
+    request_data.changed_by_api_key = _safe_key_hash(request_data.changed_by_api_key)
+    for field in ("before_value", "updated_values"):
+        value = getattr(request_data, field)
+        if value is not None:
+            setattr(request_data, field, json.dumps(_sanitize_value(value), default=str))
 
     # Dispatch to external audit log callbacks regardless of DB availability
     await _dispatch_audit_log_to_callbacks(request_data)
@@ -231,6 +237,6 @@ async def create_audit_log_for_update(request_data: LiteLLM_AuditLogs):
                 **_request_data,  # type: ignore
             }
         )
-    except Exception as e:
-        # [Non-Blocking Exception. Do not allow blocking LLM API call]
-        verbose_proxy_logger.error(f"Failed Creating audit log {e}")
+    except Exception:
+        # Do not log database exception text: it may include audit payload secrets.
+        verbose_proxy_logger.error("Failed creating audit log id=%s", request_data.id)

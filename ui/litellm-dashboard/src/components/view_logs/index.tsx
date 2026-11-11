@@ -11,10 +11,9 @@ interface SpendLogsTableProps {
   token: string | null;
   userRole: string | null;
   userID: string | null;
-  premiumUser: boolean;
 }
 
-export default function SpendLogsTable({ accessToken, token, userRole, userID, premiumUser }: SpendLogsTableProps) {
+export default function SpendLogsTable({ accessToken, token, userRole, userID }: SpendLogsTableProps) {
   const [activeTab, setActiveTab] = useState("request logs");
 
   if (!accessToken || !token || !userRole || !userID) {
@@ -51,7 +50,6 @@ export default function SpendLogsTable({ accessToken, token, userRole, userID, p
               token={token}
               accessToken={accessToken}
               isActive={activeTab === "audit logs"}
-              premiumUser={premiumUser}
             />
           </TabPanel>
           <TabPanel>

@@ -177,7 +177,7 @@ class TestCreateAuditLogForUpdateWithCallbacks:
             mock_logger.async_log_audit_log_event.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_no_dispatch_when_not_premium(self):
+    async def test_dispatches_when_not_premium_and_masks_secrets(self):
         mock_logger = MagicMock(spec=CustomLogger)
         mock_logger.async_log_audit_log_event = AsyncMock()
         litellm.audit_log_callbacks = [mock_logger]
@@ -185,12 +185,20 @@ class TestCreateAuditLogForUpdateWithCallbacks:
         with (
             patch("litellm.proxy.proxy_server.premium_user", False),
             patch("litellm.store_audit_logs", True),
+            patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma,
         ):
+            mock_prisma.db.litellm_auditlog.create = AsyncMock()
             audit_log = _make_audit_log()
+            audit_log.updated_values = json.dumps({"team_id": "team-456", "api_key": "test-secret"})
             await create_audit_log_for_update(audit_log)
             await asyncio.sleep(0.1)
 
-            mock_logger.async_log_audit_log_event.assert_not_called()
+            mock_logger.async_log_audit_log_event.assert_called_once()
+            payload = mock_logger.async_log_audit_log_event.call_args.args[0]
+            assert payload["changed_by_api_key"] != "sk-abc"
+            assert json.loads(payload["updated_values"])["api_key"] == "[REDACTED]"
+            assert json.loads(payload["updated_values"])["team_id"] == "team-456"
+            mock_prisma.db.litellm_auditlog.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_dispatch_when_store_audit_logs_false(self):

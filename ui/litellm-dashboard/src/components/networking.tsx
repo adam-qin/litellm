@@ -6458,7 +6458,7 @@ export const uiAuditLogsCall = async ({
   params = {},
 }: UiAuditLogsCallOptions) => {
   try {
-    let url = proxyBaseUrl ? `${proxyBaseUrl}/audit` : `/audit`;
+    let url = proxyBaseUrl ? `${proxyBaseUrl}/xhub/audit-logs` : `/xhub/audit-logs`;
 
     const queryParams = new URLSearchParams();
     queryParams.append("page", page.toString());
