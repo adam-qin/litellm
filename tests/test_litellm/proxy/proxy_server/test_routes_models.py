@@ -19,6 +19,23 @@ from litellm.proxy import proxy_server
 from .conftest import normalize  # type: ignore[import-not-found]
 
 
+def test_virtual_proxy_admin_key_is_not_master_credential():
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+    from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
+
+    virtual_key = UserAPIKeyAuth(
+        api_key="sk-virtual-proxy-admin",
+        user_role=LitellmUserRoles.PROXY_ADMIN,
+    )
+    master_key = UserAPIKeyAuth(
+        api_key=LITELLM_PROXY_MASTER_KEY_ALIAS,
+        user_role=LitellmUserRoles.PROXY_ADMIN,
+    )
+
+    assert proxy_server._is_real_master_credential(virtual_key) is False
+    assert proxy_server._is_real_master_credential(master_key) is True
+
+
 def _stub_model_info_response(
     model_id: str = "gpt-4", provider: str = "openai"
 ) -> dict:

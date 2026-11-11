@@ -8708,6 +8708,13 @@ class ProxyStartupEvent:
 
 
 #### API ENDPOINTS ####
+def _is_real_master_credential(user_api_key_dict: UserAPIKeyAuth) -> bool:
+    """Return true only for the configured master credential, not its role."""
+    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
+
+    return user_api_key_dict.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS
+
+
 def _team_owned_model_candidates(
     models: List[str], user_api_key_dict: UserAPIKeyAuth, llm_router: Optional[Router]
 ) -> List[str]:
@@ -8798,11 +8805,9 @@ async def model_list(
         get_available_models_for_user,
     )
 
-    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
-
     # A virtual key's administrative role must not let a caller choose another
     # team's model-list scope. Only the actual master credential may do so.
-    is_master_credential = user_api_key_dict.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS
+    is_master_credential = _is_real_master_credential(user_api_key_dict)
     if team_id and not is_master_credential:
         if not user_api_key_dict.team_id or team_id != user_api_key_dict.team_id:
             raise HTTPException(status_code=403, detail="Key cannot select another team")
@@ -9003,9 +9008,7 @@ async def model_info(
     )
 
     # Mirror /v1/models' candidate and inference authorization paths.
-    from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
-
-    if user_api_key_dict.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS:
+    if not _is_real_master_credential(user_api_key_dict):
         all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
         all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
     blocked_names = llm_router.get_fully_blocked_model_names() if llm_router is not None else set()
@@ -12405,12 +12408,11 @@ async def model_info_v2(
             prisma_client=prisma_client,
         )
 
-    # Non-admin callers must always use the team-aware access path, including
-    # the default "All Available" request where include_team_models is false.
-    # Otherwise the endpoint returns the raw router model list and exposes
-    # other organizations' team deployments and orgless Proxy Admin DB models.
-    caller_is_proxy_admin = user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN
-    if include_team_models or personalOnly or not caller_is_proxy_admin:
+    # Only the real master credential may receive the unfiltered global view.
+    # A virtual key can carry a Proxy Admin role for management operations, but
+    # that role must not expose deployments owned by other teams here.
+    is_master_credential = _is_real_master_credential(user_api_key_dict)
+    if include_team_models or personalOnly or not is_master_credential:
         # Personal filtering relies on the same server-side access enrichment
         # as the normal team-aware list path. Do not let API callers receive an
         # empty or under-enriched result merely because they omitted the
@@ -12435,8 +12437,8 @@ async def model_info_v2(
         search_total_count = len(all_models)
 
     # Single-ID lookups are an IDOR vector if they skip the list-path filters.
-    # Always drop other teams' BYOK rows. Non-admins also get the accessible-model
-    # filter even when `include_team_models` is omitted; proxy admins keep global view.
+    # Always drop other teams' BYOK rows. Virtual keys also get the accessible-model
+    # filter even when `include_team_models` is omitted; only the real master keeps global view.
     if modelId is not None:
         allowed_team_ids = await _get_caller_byok_team_scope(
             user_api_key_dict=user_api_key_dict,
