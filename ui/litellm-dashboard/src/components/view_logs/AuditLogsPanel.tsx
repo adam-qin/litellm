@@ -85,6 +85,12 @@ export default function AuditLogsPanel({
         <h1 className="text-xl font-semibold">Audit Logs</h1>
       </div>
 
+      {query.isError && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          {query.error instanceof Error ? query.error.message : "无法加载审计日志，请稍后重试。"}
+        </div>
+      )}
+
       <AuditLogsTable
         data={query.data?.audit_logs ?? []}
         rowCount={query.data?.total ?? 0}

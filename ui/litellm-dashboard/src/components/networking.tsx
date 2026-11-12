@@ -6481,8 +6481,13 @@ export const uiAuditLogsCall = async ({
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      const errorMessage = deriveErrorMessage(errorData);
+      let errorMessage = `Audit logs request failed (${response.status})`;
+      try {
+        const errorData = await response.json();
+        errorMessage = deriveErrorMessage(errorData) || errorMessage;
+      } catch {
+        // Keep a safe generic message when the proxy returns an empty/non-JSON error.
+      }
       handleError(errorMessage);
       throw new Error(errorMessage);
     }

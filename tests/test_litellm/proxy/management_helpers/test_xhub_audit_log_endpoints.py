@@ -14,6 +14,7 @@ from litellm.proxy.management_endpoints.xhub_audit_log_endpoints import (
     _require_audit_reader,
     _sanitize_value,
     get_xhub_audit_log_by_id,
+    get_xhub_audit_logs,
 )
 
 
@@ -61,3 +62,15 @@ async def test_detail_denies_virtual_admin_before_database_access():
     with pytest.raises(HTTPException) as error:
         await get_xhub_audit_log_by_id("missing", virtual)
     assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_maps_database_outage_to_503():
+    master = UserAPIKeyAuth(api_key=LITELLM_PROXY_MASTER_KEY_ALIAS, user_role=LitellmUserRoles.PROXY_ADMIN)
+    db = MagicMock()
+    db.db.litellm_auditlog.find_many = AsyncMock(side_effect=ConnectionError("database unavailable"))
+    db.attempt_db_reconnect = AsyncMock(return_value=False)
+    with patch("litellm.proxy.proxy_server.prisma_client", db):
+        with pytest.raises(HTTPException) as error:
+            await get_xhub_audit_logs(user_api_key_dict=master)
+    assert error.value.status_code == 503

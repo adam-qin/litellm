@@ -16,6 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
 from litellm.proxy._types import CommonProxyErrors, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from litellm.proxy.db.exception_handler import (
+    PrismaDBExceptionHandler,
+    call_with_db_reconnect_retry,
+)
 
 router = APIRouter(prefix="/xhub", tags=["XHub Audit Logging"])
 
@@ -166,13 +170,29 @@ async def get_xhub_audit_logs(
     if object_key_hash:
         where["AND"] = where.get("AND", []) + [_json_field_or_condition("token", object_key_hash)]
 
-    logs = await prisma_client.db.litellm_auditlog.find_many(
-        where=where,
-        order={sort_by: sort_order},
-        skip=(page - 1) * page_size,
-        take=page_size,
-    )
-    total = await prisma_client.db.litellm_auditlog.count(where=where)
+    try:
+        logs = await call_with_db_reconnect_retry(
+            prisma_client,
+            lambda: prisma_client.db.litellm_auditlog.find_many(
+                where=where,
+                order={sort_by: sort_order},
+                skip=(page - 1) * page_size,
+                take=page_size,
+            ),
+            reason="xhub_audit_logs_find_many_failure",
+        )
+        total = await call_with_db_reconnect_retry(
+            prisma_client,
+            lambda: prisma_client.db.litellm_auditlog.count(where=where),
+            reason="xhub_audit_logs_count_failure",
+        )
+    except Exception as error:
+        if PrismaDBExceptionHandler.is_database_service_unavailable_error_in_chain(error):
+            raise HTTPException(
+                status_code=503,
+                detail="Audit log database is temporarily unavailable. Please retry shortly.",
+            ) from None
+        raise HTTPException(status_code=500, detail="Failed to query audit logs") from None
     return {
         "audit_logs": [_audit_log_to_dict(log) for log in logs or []],
         "total": total,
@@ -195,9 +215,21 @@ async def get_xhub_audit_log_by_id(
             status_code=500,
             detail={"message": CommonProxyErrors.db_not_connected_error.value},
         )
-    audit_log = await prisma_client.db.litellm_auditlog.find_unique(
-        where={"id": audit_log_id}
-    )
+    try:
+        audit_log = await call_with_db_reconnect_retry(
+            prisma_client,
+            lambda: prisma_client.db.litellm_auditlog.find_unique(
+                where={"id": audit_log_id}
+            ),
+            reason="xhub_audit_log_find_unique_failure",
+        )
+    except Exception as error:
+        if PrismaDBExceptionHandler.is_database_service_unavailable_error_in_chain(error):
+            raise HTTPException(
+                status_code=503,
+                detail="Audit log database is temporarily unavailable. Please retry shortly.",
+            ) from None
+        raise HTTPException(status_code=500, detail="Failed to query audit log") from None
     if audit_log is None:
         raise HTTPException(status_code=404, detail="Audit log not found")
     return _audit_log_to_dict(audit_log)
