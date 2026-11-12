@@ -6474,6 +6474,7 @@ export const uiAuditLogsCall = async ({
 
     const response = await fetch(url, {
       method: "GET",
+      credentials: "include",
       headers: {
         [globalLitellmHeaderName]: `Bearer ${accessToken}`,
         "Content-Type": "application/json",

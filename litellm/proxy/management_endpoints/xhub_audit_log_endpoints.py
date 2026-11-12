@@ -2,19 +2,26 @@
 
 This module intentionally does not depend on the optional Enterprise router. Audit
 records are still stored by the existing LiteLLM audit logger, but reads are
-exposed through an XHub-owned namespace with an explicit master-credential check.
+exposed through an XHub-owned namespace with explicit master or UI admin session checks.
 """
 
 import hashlib
+import hmac
 import json
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS
-from litellm.proxy._types import CommonProxyErrors, UserAPIKeyAuth
+from litellm.constants import LITELLM_PROXY_MASTER_KEY_ALIAS, UI_SESSION_TOKEN_TEAM_ID
+from litellm.proxy._types import (
+    CommonProxyErrors,
+    LitellmUserRoles,
+    UserAPIKeyAuth,
+    hash_token,
+)
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.proxy.db.exception_handler import (
     PrismaDBExceptionHandler,
@@ -40,13 +47,42 @@ _MASK = "[REDACTED]"
 _KEY_HASH = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
-def _require_audit_reader(user_api_key_dict: UserAPIKeyAuth) -> None:
-    """Keep audit-log reads separate from role-based management privileges."""
-    if user_api_key_dict.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS:
-        raise HTTPException(
-            status_code=403,
-            detail="XHub audit logs require the configured master credential",
-        )
+def _require_audit_reader(user_api_key_dict: UserAPIKeyAuth, request: Request) -> None:
+    """Accept only the real master credential or a signed, bound UI admin session.
+
+    The Dashboard team id, key type and role can also be set on virtual keys;
+    none of those properties alone proves that the caller logged in through UI.
+    """
+    if user_api_key_dict.api_key == LITELLM_PROXY_MASTER_KEY_ALIAS:
+        return
+
+    from litellm.proxy.proxy_server import general_settings, master_key
+
+    auth_header_name = (general_settings or {}).get("litellm_key_header_name", "Authorization")
+    authorization = request.headers.get(auth_header_name, "")
+    bearer = authorization[7:] if authorization.lower().startswith("bearer ") else ""
+    cookie = request.cookies.get("token")
+    if cookie and bearer and isinstance(master_key, str) and master_key:
+        try:
+            claims = jwt.decode(cookie, master_key, algorithms=["HS256"], options={"require": ["exp"]})
+        except jwt.PyJWTError:
+            claims = {}
+        if (
+            isinstance(claims.get("key"), str)
+            and hmac.compare_digest(claims["key"], bearer)
+            and user_api_key_dict.api_key == hash_token(bearer)
+            and claims.get("user_id")
+            and claims["user_id"] == user_api_key_dict.user_id
+            and claims.get("user_role") == LitellmUserRoles.PROXY_ADMIN.value
+            and user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN
+            and user_api_key_dict.team_id == UI_SESSION_TOKEN_TEAM_ID
+        ):
+            return
+
+    raise HTTPException(
+        status_code=403,
+        detail="XHub audit logs require the configured master credential or a Dashboard admin session",
+    )
 
 
 def _is_sensitive_key(key: Any) -> bool:
@@ -119,6 +155,7 @@ def _json_field_or_condition(json_key: str, value: str) -> Dict[str, Any]:
 
 @router.get("/audit-logs")
 async def get_xhub_audit_logs(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     changed_by: Optional[str] = Query(None),
@@ -134,7 +171,7 @@ async def get_xhub_audit_logs(
     sort_order: str = Query("desc"),
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
-    _require_audit_reader(user_api_key_dict)
+    _require_audit_reader(user_api_key_dict, request)
     if sort_by not in _ALLOWED_SORT_FIELDS:
         raise HTTPException(status_code=400, detail="Invalid audit-log sort field")
     if sort_order not in {"asc", "desc"}:
@@ -205,9 +242,10 @@ async def get_xhub_audit_logs(
 @router.get("/audit-logs/{audit_log_id}")
 async def get_xhub_audit_log_by_id(
     audit_log_id: str,
+    request: Request,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
-    _require_audit_reader(user_api_key_dict)
+    _require_audit_reader(user_api_key_dict, request)
     from litellm.proxy.proxy_server import prisma_client
 
     if prisma_client is None:
