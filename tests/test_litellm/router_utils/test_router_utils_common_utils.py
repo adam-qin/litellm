@@ -306,6 +306,37 @@ class TestFilterModelOwnershipScope:
         }
         assert filter_model_ownership_scope(deployment, request_kwargs) == []
 
+    def test_admin_cannot_infer_team_model_by_deployment_id(self):
+        router = Router(model_list=[
+            {
+                "model_name": "private_team-a",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-test"},
+                "model_info": {"id": "private-id", "team_id": "team-a", "xhub_model_scope": "team_only"},
+            },
+            {
+                "model_name": "global",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-test"},
+                "model_info": {"id": "global-id", "xhub_model_scope": "global"},
+            },
+        ])
+        admin = {"user_role": "proxy_admin"}
+        request_kwargs = {"litellm_metadata": {"user_api_key_auth": admin}}
+        with pytest.raises(Exception, match="outside the requester's ownership scope"):
+            router._common_checks_available_deployment(model="private-id", request_kwargs=request_kwargs)
+        _, deployment = router._common_checks_available_deployment(
+            model="global-id", request_kwargs=request_kwargs
+        )
+        assert deployment["model_info"]["id"] == "global-id"
+
+    def test_admin_cannot_infer_team_model_with_forged_metadata(self):
+        private = {"model_info": {"id": "private-id", "team_id": "team-a", "xhub_model_scope": "team_only"}}
+        request_kwargs = {
+            "metadata": {"user_api_key_team_id": "team-a", "user_api_key_auth": {"user_role": "proxy_admin"}},
+            "litellm_metadata": {"user_api_key_auth": {"user_role": "proxy_admin"}},
+        }
+        # Client metadata must not become a substitute for an authenticated team.
+        assert filter_model_ownership_scope(private, request_kwargs) == []
+
     def test_router_rejects_other_team_model_id(self):
         router = Router(
             model_list=[

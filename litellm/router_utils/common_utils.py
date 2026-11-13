@@ -73,13 +73,18 @@ def filter_model_ownership_scope(
 
     metadata = request_kwargs.get("metadata") or {}
     litellm_metadata = request_kwargs.get("litellm_metadata") or {}
-    request_team_id = litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
-    user_api_key_auth = litellm_metadata.get("user_api_key_auth") or metadata.get("user_api_key_auth")
+    # When server authentication is present in litellm_metadata, never fill a
+    # missing team from the other (potentially client-supplied) metadata dict.
+    server_auth = litellm_metadata.get("user_api_key_auth")
+    request_team_id = (
+        litellm_metadata.get("user_api_key_team_id")
+        if server_auth is not None
+        else litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
+    )
+    user_api_key_auth = server_auth or metadata.get("user_api_key_auth")
 
-    # A Proxy Admin request without a team context is the global management plane.
-    if request_team_id is None and _is_proxy_admin_request(request_kwargs):
-        return healthy_deployments
-
+    # Management identity never grants inference access to team-owned deployments.
+    # A real team context must come from the authenticated request pipeline.
     deployments = healthy_deployments if isinstance(healthy_deployments, list) else [healthy_deployments]
 
     from litellm.models.team import LiteLLM_TeamTable
@@ -124,7 +129,12 @@ def filter_team_based_models(
 
     metadata = request_kwargs.get("metadata") or {}
     litellm_metadata = request_kwargs.get("litellm_metadata") or {}
-    request_team_id = litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
+    server_auth = litellm_metadata.get("user_api_key_auth")
+    request_team_id = (
+        litellm_metadata.get("user_api_key_team_id")
+        if server_auth is not None
+        else litellm_metadata.get("user_api_key_team_id") or metadata.get("user_api_key_team_id")
+    )
     if request_team_id is None and _is_proxy_admin_request(request_kwargs) and isinstance(healthy_deployments, list):
         requested_model = (
             request_kwargs.get("model") or metadata.get("model_group") or litellm_metadata.get("model_group")
@@ -151,7 +161,7 @@ def filter_team_based_models(
             raise BadRequestError(
                 message=(
                     f"Model name '{requested_model}' matches deployments from multiple teams. "
-                    "Specify the deployment ID directly to disambiguate."
+                    "Select an authorized team context; a management credential alone cannot infer team-owned models."
                 ),
                 model=requested_model,
                 llm_provider="",

@@ -4,12 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    image: xhub/litellm:1.95.58
+    image: xhub/litellm:1.95.59
     restart: unless-stopped
     ports:
       - "4000:4000"
     environment:
-      DATABASE_URL: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"
+      DATABASE_URL: "postgresql://llmproxy:${XHUB_POSTGRES_PASSWORD:?Set XHUB_POSTGRES_PASSWORD in .env before starting XHub}@db:5432/litellm"
       STORE_MODEL_IN_DB: "True"
       LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in .env before starting XHub}"
       # XHub self-hosted: allow the HashiCorp Vault secret manager without a
@@ -39,7 +39,7 @@ services:
     environment:
       POSTGRES_DB: litellm
       POSTGRES_USER: llmproxy
-      POSTGRES_PASSWORD: dbpassword9090
+      POSTGRES_PASSWORD: "${XHUB_POSTGRES_PASSWORD:?Set XHUB_POSTGRES_PASSWORD in .env before starting XHub}"
     volumes:
       - xhub_postgres_data:/var/lib/postgresql/data
     healthcheck:
