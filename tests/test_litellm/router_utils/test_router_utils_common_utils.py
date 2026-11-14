@@ -328,6 +328,38 @@ class TestFilterModelOwnershipScope:
         )
         assert deployment["model_info"]["id"] == "global-id"
 
+    def test_authenticated_teamless_admin_routes_only_unbound_global_deployments(self):
+        router = Router(model_list=[
+            {
+                "model_name": "global-model",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-test"},
+                "model_info": {"id": "global-id", "db_model": True, "xhub_model_scope": "global"},
+            },
+            {
+                "model_name": "legacy-global-model",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-test"},
+                "model_info": {"id": "legacy-global-id", "db_model": True, "xhub_model_scope": "orgless_proxy_team"},
+            },
+            {
+                "model_name": "private-model",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-test"},
+                "model_info": {"id": "private-id", "team_id": "team-a", "xhub_model_scope": "team_only"},
+            },
+        ])
+        authenticated_admin = {"litellm_metadata": {"user_api_key_auth": {"user_role": "proxy_admin"}}}
+        for model in ("global-model", "global-id", "legacy-global-model", "legacy-global-id"):
+            _, deployment = router._common_checks_available_deployment(model=model, request_kwargs=authenticated_admin)
+            deployments = deployment if isinstance(deployment, list) else [deployment]
+            assert deployments
+            assert all(item["model_info"].get("team_id") is None for item in deployments)
+        with pytest.raises(Exception, match="outside the requester's ownership scope"):
+            router._common_checks_available_deployment(model="private-id", request_kwargs=authenticated_admin)
+
+    def test_forged_client_admin_cannot_infer_global_scope(self):
+        global_model = {"model_info": {"id": "global-id", "xhub_model_scope": "global"}}
+        request_kwargs = {"metadata": {"user_api_key_auth": {"user_role": "proxy_admin"}}}
+        assert filter_model_ownership_scope(global_model, request_kwargs) == []
+
     def test_admin_cannot_infer_team_model_with_forged_metadata(self):
         private = {"model_info": {"id": "private-id", "team_id": "team-a", "xhub_model_scope": "team_only"}}
         request_kwargs = {

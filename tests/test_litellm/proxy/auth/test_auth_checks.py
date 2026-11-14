@@ -582,6 +582,41 @@ async def test_proxy_admin_key_without_team_cannot_call_team_owned_model():
     assert exc_info.value.type == ProxyErrorTypes.team_model_access_denied
 
 
+def test_teamless_admin_global_scope_requires_explicit_authorization():
+    from litellm import Router
+    from litellm.proxy.auth.auth_checks import _enforce_team_model_scope
+
+    router = Router(model_list=[
+        {
+            "model_name": "global-model",
+            "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-global"},
+            "model_info": {"id": "global-id", "db_model": True, "xhub_model_scope": "global"},
+        },
+        {
+            "model_name": "legacy-global-model",
+            "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-global"},
+            "model_info": {"id": "legacy-global-id", "db_model": True, "xhub_model_scope": "orgless_proxy_team"},
+        },
+        {
+            "model_name": "private-model",
+            "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-team"},
+            "model_info": {"id": "private-id", "team_id": "team-a", "xhub_model_scope": "team_only"},
+        },
+        {
+            "model_name": "inconsistent-model",
+            "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-team"},
+            "model_info": {"id": "inconsistent-id", "team_id": "team-a", "xhub_model_scope": "global"},
+        },
+    ])
+    for model in ("global-model", "global-id", "legacy-global-model", "legacy-global-id"):
+        _enforce_team_model_scope(model=model, team_object=None, llm_router=router, allow_teamless_admin_global=True)
+        with pytest.raises(ProxyException):
+            _enforce_team_model_scope(model=model, team_object=None, llm_router=router)
+    for model in ("private-id", "inconsistent-id"):
+        with pytest.raises(ProxyException):
+            _enforce_team_model_scope(model=model, team_object=None, llm_router=router, allow_teamless_admin_global=True)
+
+
 def test_team_scope_check_rejects_other_team_model_id():
     from litellm import Router
     from litellm.proxy.auth.auth_checks import _enforce_team_model_scope

@@ -3062,9 +3062,15 @@ def _enforce_team_model_scope(
     model: Union[str, List[str]],
     team_object: Optional[LiteLLM_TeamTable],
     llm_router: Optional[Router],
+    allow_teamless_admin_global: bool = False,
 ) -> None:
     """Apply XHub ownership scope before allowlists or access groups."""
-    from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_GLOBAL,
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+        team_can_use_model_info,
+    )
 
     deployments = _router_deployments_for_scope_check(
         model=model,
@@ -3075,6 +3081,13 @@ def _enforce_team_model_scope(
         deployment for deployment in deployments if get_model_scope(deployment.get("model_info", {})) is not None
     ]
     if not scoped_deployments:
+        return
+    if allow_teamless_admin_global and team_object is None and all(
+        get_model_scope(deployment.get("model_info", {}))
+        in (MODEL_SCOPE_GLOBAL, MODEL_SCOPE_ORGLESS_PROXY_TEAM)
+        and not (deployment.get("model_info") or {}).get("team_id")
+        for deployment in scoped_deployments
+    ):
         return
     if team_object is not None and any(
         team_can_use_model_info(deployment.get("model_info", {}), team_object)
@@ -3216,6 +3229,10 @@ async def can_key_call_resolved_model(
         model=model,
         team_object=team_object,
         llm_router=llm_router,
+        allow_teamless_admin_global=(
+            valid_token.user_role == LitellmUserRoles.PROXY_ADMIN
+            and valid_token.team_id is None
+        ),
     )
 
     if team_object is not None:

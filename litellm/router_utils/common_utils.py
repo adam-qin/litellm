@@ -88,7 +88,12 @@ def filter_model_ownership_scope(
     deployments = healthy_deployments if isinstance(healthy_deployments, list) else [healthy_deployments]
 
     from litellm.models.team import LiteLLM_TeamTable
-    from litellm.proxy.auth.model_scope import get_model_scope, team_can_use_model_info
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_GLOBAL,
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+        team_can_use_model_info,
+    )
 
     team = None
     if request_team_id is not None:
@@ -102,10 +107,22 @@ def filter_model_ownership_scope(
             else {},
         )
 
+    teamless_admin = (
+        server_auth is not None
+        and request_team_id is None
+        and _auth_value(server_auth, "user_role") == "proxy_admin"
+    )
     filtered_deployments: List[Dict] = []
     for deployment in deployments:
         model_info = deployment.get("model_info") or {}
-        if get_model_scope(model_info) is None:
+        scope = get_model_scope(model_info)
+        if scope is None:
+            filtered_deployments.append(deployment)
+        elif (
+            teamless_admin
+            and scope in (MODEL_SCOPE_GLOBAL, MODEL_SCOPE_ORGLESS_PROXY_TEAM)
+            and not model_info.get("team_id")
+        ):
             filtered_deployments.append(deployment)
         elif team is not None and team_can_use_model_info(model_info, team):
             filtered_deployments.append(deployment)
