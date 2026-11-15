@@ -25,25 +25,23 @@ def _team(team_id: str, organization_id=None, creator_role=LitellmUserRoles.PROX
     )
 
 
-def test_proxy_admin_orgless_model_only_allows_proxy_admin_orgless_team():
+def test_orgless_model_is_global_for_every_team():
     model_info = {
         "db_model": True,
         XHUB_MODEL_SCOPE_KEY: MODEL_SCOPE_ORGLESS_PROXY_TEAM,
         XHUB_CREATOR_ROLE_KEY: LitellmUserRoles.PROXY_ADMIN.value,
     }
 
-    assert team_can_use_model_info(model_info, _team("standalone")) is True
-    assert team_can_use_model_info(model_info, _team("org-team", organization_id="org-a")) is False
-    assert (
-        team_can_use_model_info(
-            model_info,
-            _team("user-team", creator_role=LitellmUserRoles.INTERNAL_USER.value),
-        )
-        is False
-    )
-    assert team_can_use_model_info(model_info, LiteLLM_TeamTable(team_id="legacy", metadata={})) is False
-    assert team_can_use_model_info({**model_info, XHUB_CREATOR_ROLE_KEY: "internal_user"}, _team("standalone")) is False
-    assert team_can_use_model_info({**model_info, XHUB_CREATOR_ROLE_KEY: None}, _team("standalone")) is False
+    # A1 keeps the legacy marker for compatibility, but removes the old
+    # creator-role and organization restriction. An unbound model is global.
+    for team in (
+        _team("standalone"),
+        _team("org-team", organization_id="org-a"),
+        _team("user-team", creator_role=LitellmUserRoles.INTERNAL_USER.value),
+        LiteLLM_TeamTable(team_id="legacy", metadata={}),
+    ):
+        assert team_can_use_model_info(model_info, team) is True
+
     assert team_can_use_model_info({**model_info, "team_id": "owner"}, _team("standalone")) is False
 
 
@@ -59,8 +57,8 @@ def test_team_scoped_model_only_allows_exact_team():
     assert team_can_use_model_info(model_info, _team("team-b")) is False
 
 
-def test_legacy_db_models_infer_restricted_scope():
-    assert get_model_scope({"db_model": True}) == MODEL_SCOPE_ORGLESS_PROXY_TEAM
+def test_legacy_db_models_infer_global_or_team_scope():
+    assert get_model_scope({"db_model": True}) == MODEL_SCOPE_GLOBAL
     assert get_model_scope({"db_model": True, "team_id": "team-a"}) == MODEL_SCOPE_TEAM_ONLY
 
 
@@ -113,7 +111,7 @@ def _deployments():
     ]
 
 
-def test_explicit_team_allowlist_still_inherits_orgless_proxy_model():
+def test_unbound_model_is_added_for_every_team_but_team_model_stays_private():
     from litellm.proxy.proxy_server import _add_team_models_to_all_models
 
     teams = [
@@ -132,7 +130,7 @@ def test_explicit_team_allowlist_still_inherits_orgless_proxy_model():
     )
 
     access = _add_team_models_to_all_models(teams, router)
-    assert access["orgless"] == {"eligible"}
+    assert access["orgless"] == {"eligible", "org", "other", "owner"}
     assert access["private"] == {"owner"}
 
 
@@ -168,22 +166,18 @@ async def test_restricted_caller_does_not_inherit_unassigned_model_without_eligi
 
 
 @pytest.mark.asyncio
-async def test_orgless_proxy_model_default_grant_only_for_eligible_team():
+async def test_unbound_model_is_available_to_every_team_without_allowlist_entry():
     from litellm.proxy.auth.auth_checks import can_team_access_model
-    from litellm.proxy._types import ProxyException
 
     router = MagicMock()
     router.has_model_id.return_value = False
     router.get_model_list.side_effect = lambda model_name=None, team_id=None: (
         [_deployments()[0]] if model_name == "shared" else []
     )
-    eligible = _team("eligible")
-    eligible.models = ["other"]
-    assert await can_team_access_model("shared", eligible, router) is True
-    for denied in (
+    for team in (
+        _team("eligible"),
         _team("org", organization_id="org-a"),
         _team("other", creator_role=LitellmUserRoles.INTERNAL_USER.value),
     ):
-        denied.models = ["other"]
-        with pytest.raises(ProxyException):
-            await can_team_access_model("shared", denied, router)
+        team.models = ["other"]
+        assert await can_team_access_model("shared", team, router) is True

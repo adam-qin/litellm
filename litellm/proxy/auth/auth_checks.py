@@ -3318,14 +3318,20 @@ async def can_team_access_model(
         llm_router=llm_router,
     )
     # Unbound models are globally eligible under A1. They still pass through
-    # the normal key, team, project, and member restrictions below.
-    from litellm.proxy.auth.model_scope import MODEL_SCOPE_GLOBAL, get_model_scope
+    # the normal key, team, project, and member restrictions below. Legacy
+    # orgless_proxy_team rows are also unbound global models after A1.
+    from litellm.proxy.auth.model_scope import (
+        MODEL_SCOPE_GLOBAL,
+        MODEL_SCOPE_ORGLESS_PROXY_TEAM,
+        get_model_scope,
+    )
 
     if team_object is not None:
         requested_models = model if isinstance(model, list) else [model]
         if requested_models and all(
             any(
-                get_model_scope(deployment.get("model_info", {})) == MODEL_SCOPE_GLOBAL
+                get_model_scope(deployment.get("model_info", {}))
+                in (MODEL_SCOPE_GLOBAL, MODEL_SCOPE_ORGLESS_PROXY_TEAM)
                 for deployment in _router_deployments_for_scope_check(
                     model=name,
                     llm_router=llm_router,
