@@ -170,18 +170,30 @@ def raise_if_required_body_param_missing(route_type: str, data: Mapping[str, obj
     )
 
 
-def get_team_id_from_data(data: dict) -> Optional[str]:
+def get_team_id_from_data(
+    data: dict,
+    user_api_key_dict: Optional[UserAPIKeyAuth] = None,
+) -> Optional[str]:
+    """Resolve the request team from trusted auth before request metadata.
+
+    ``metadata`` is caller-controlled for normal API requests. Once the proxy
+    has resolved a credential, its team_id is the source of truth; accepting a
+    different metadata value here can route a request through another team's
+    deployment or change its tenant attribution. The metadata fallback is kept
+    for internal callers which invoke this helper before authentication has
+    been attached.
     """
-    Get the team id from the data's metadata or litellm_metadata params.
-    """
-    if "metadata" in data and data["metadata"] is not None and "user_api_key_team_id" in data["metadata"]:
-        return data["metadata"].get("user_api_key_team_id")
-    elif (
-        "litellm_metadata" in data
-        and data["litellm_metadata"] is not None
-        and "user_api_key_team_id" in data["litellm_metadata"]
-    ):
-        return data["litellm_metadata"].get("user_api_key_team_id")
+    if user_api_key_dict is not None:
+        return user_api_key_dict.team_id
+
+    if "litellm_metadata" in data and isinstance(data["litellm_metadata"], dict):
+        if "user_api_key_team_id" in data["litellm_metadata"]:
+            return data["litellm_metadata"].get("user_api_key_team_id")
+
+    if "metadata" in data and isinstance(data["metadata"], dict):
+        if "user_api_key_team_id" in data["metadata"]:
+            return data["metadata"].get("user_api_key_team_id")
+
     return None
 
 
@@ -468,7 +480,7 @@ async def route_request(
     team_id = await _resolve_dashboard_session_team_id(
         data=data,
         llm_router=llm_router,
-        team_id=get_team_id_from_data(data),
+        team_id=get_team_id_from_data(data, user_api_key_dict=user_api_key_dict),
         user_api_key_dict=user_api_key_dict,
     )
     router_model_names = llm_router.model_names if llm_router is not None else []

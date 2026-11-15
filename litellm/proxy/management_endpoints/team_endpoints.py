@@ -977,6 +977,35 @@ def _should_auto_add_team_creator(
     return general_settings.get("disable_auto_add_proxy_admin_to_teams") is not True
 
 
+async def _verify_new_team_organization_access(
+    organization_id: Optional[str],
+    user_api_key_dict: UserAPIKeyAuth,
+    prisma_client: PrismaClient,
+    user_api_key_cache: Any,
+    proxy_logging_obj: Any,
+) -> None:
+    """Authorize the requested organization before reading its limits or models."""
+    if organization_id is None or user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN:
+        return
+    if user_api_key_dict.user_id is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this organization")
+
+    caller_user = await get_user_object(
+        user_id=user_api_key_dict.user_id,
+        prisma_client=prisma_client,
+        user_api_key_cache=user_api_key_cache,
+        user_id_upsert=False,
+        proxy_logging_obj=proxy_logging_obj,
+    )
+    if caller_user is not None and any(
+        membership.organization_id == organization_id
+        and membership.user_role == LitellmUserRoles.ORG_ADMIN.value
+        for membership in caller_user.organization_memberships or []
+    ):
+        return
+    raise HTTPException(status_code=403, detail="You do not have access to this organization")
+
+
 #### TEAM MANAGEMENT ####
 @router.post(
     "/team/new",
@@ -1084,6 +1113,7 @@ async def new_team(
             litellm_proxy_admin_name,
             llm_router,
             prisma_client,
+            proxy_logging_obj,
             user_api_key_cache,
         )
 
@@ -1149,6 +1179,17 @@ async def new_team(
                     status_code=400,
                     detail={"error": f"Team id = {data.team_id} already exists. Please use a different team id."},
                 )
+
+        # Organization-scoped teams are tenant resources. Authorize the target
+        # organization before loading its limits/models so an unauthorized
+        # caller cannot probe another organization's configuration.
+        await _verify_new_team_organization_access(
+            organization_id=data.organization_id,
+            user_api_key_dict=user_api_key_dict,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+        )
 
         # check org key limits - done here to handle inheriting org id from team
         if data.organization_id is not None and prisma_client is not None:

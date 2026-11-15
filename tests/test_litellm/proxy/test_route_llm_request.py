@@ -8,11 +8,32 @@ sys.path.insert(0, os.path.abspath("../../.."))  # Adds the parent directory to 
 
 from unittest.mock import AsyncMock, MagicMock
 
+from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.route_llm_request import (
     ProxyModelNotFoundError,
     _resolve_dashboard_session_team_id,
+    get_team_id_from_data,
     route_request,
 )
+
+
+def test_get_team_id_from_data_prefers_trusted_auth_over_client_metadata():
+    auth = UserAPIKeyAuth(team_id="trusted-team")
+    data = {
+        "litellm_metadata": {"user_api_key_team_id": "internal-team"},
+        "metadata": {"user_api_key_team_id": "client-team"},
+    }
+
+    assert get_team_id_from_data(data, user_api_key_dict=auth) == "trusted-team"
+
+
+def test_get_team_id_from_data_uses_internal_metadata_without_auth():
+    data = {
+        "litellm_metadata": {"user_api_key_team_id": "internal-team"},
+        "metadata": {"user_api_key_team_id": "client-team"},
+    }
+
+    assert get_team_id_from_data(data) == "internal-team"
 
 
 @pytest.mark.parametrize(
@@ -48,7 +69,7 @@ async def test_route_request_dynamic_credentials(route_type, required_body_param
 
 
 @pytest.mark.asyncio
-async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_without_team_id():
+async def test_route_request_proxy_admin_cannot_call_team_scoped_deployments_without_team_id():
     import litellm
 
     from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
@@ -94,24 +115,15 @@ async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_wi
         "metadata": {"user_api_key_auth": admin_auth},
     }
 
-    llm_call = await route_request(
-        data=data,
-        llm_router=router,
-        user_model=None,
-        route_type="acompletion",
-        user_api_key_dict=admin_auth,
-    )
-    response = await llm_call
-    deployments = await router.async_get_healthy_deployments(
-        model="team-azure",
-        request_kwargs=data,
-    )
-
-    assert response.choices[0].message.content in {"east", "west"}
-    assert {deployment["model_info"]["id"] for deployment in deployments} == {
-        "team-azure-east",
-        "team-azure-west",
-    }
+    with pytest.raises((ProxyModelNotFoundError, litellm.BadRequestError)):
+        llm_call = await route_request(
+            data=data,
+            llm_router=router,
+            user_model=None,
+            route_type="acompletion",
+            user_api_key_dict=admin_auth,
+        )
+        await llm_call
 
     non_admin_auth = UserAPIKeyAuth(user_role=LitellmUserRoles.INTERNAL_USER)
     with pytest.raises(ProxyModelNotFoundError):
@@ -143,15 +155,14 @@ async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_wi
             },
         )
     )
-    internal_deployments = await router.async_get_healthy_deployments(
-        model="internal-team-only",
-        request_kwargs={
-            **data,
-            "model": "internal-team-only",
-        },
-    )
-
-    assert {deployment["model_info"]["id"] for deployment in internal_deployments} == {"internal-team-only-id"}
+    with pytest.raises(litellm.BadRequestError):
+        await router.async_get_healthy_deployments(
+            model="internal-team-only",
+            request_kwargs={
+                **data,
+                "model": "internal-team-only",
+            },
+        )
 
     router.add_deployment(
         Deployment(
@@ -214,7 +225,7 @@ async def test_route_request_proxy_admin_can_call_all_team_scoped_deployments_wi
         )
     )
 
-    with pytest.raises(litellm.BadRequestError, match="multiple teams"):
+    with pytest.raises(litellm.BadRequestError, match="No deployments available"):
         await router.async_get_healthy_deployments(
             model="team-azure",
             request_kwargs=data,
