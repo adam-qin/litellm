@@ -74,14 +74,27 @@ mock_prisma_client = MagicMock()
 mock_prisma_client.db = MagicMock()
 mock_prisma_client.db.litellm_teamtable = MagicMock()
 mock_prisma_client.db.litellm_teamtable.update = AsyncMock()
+mock_prisma_client.db.litellm_proxymodeltable = MagicMock()
+mock_prisma_client.db.litellm_proxymodeltable.find_many = AsyncMock(return_value=[])
 
 
 # Fixture to provide the mock prisma client
 @pytest.fixture(autouse=True)
 def mock_db_client():
-    with patch(
-        "litellm.proxy.proxy_server.prisma_client", mock_prisma_client
+    with (
+        patch("litellm.proxy.proxy_server.prisma_client", mock_prisma_client),
+        # These tests target team endpoint data shaping and budget behavior. The
+        # ownership validator has dedicated coverage and requires a live-model
+        # repository fixture, so keep unrelated mocks isolated from that lookup.
+        patch(
+            "litellm.proxy.management_endpoints.team_endpoints._validate_team_model_scope_references",
+            new_callable=AsyncMock,
+        ),
     ):  # Mock in both places if necessary
+        # ModelRepository uses the Prisma-generated proxy-model table name.
+        # Keep this async stub present even when individual tests replace db.
+        mock_prisma_client.db.litellm_proxymodeltable = MagicMock()
+        mock_prisma_client.db.litellm_proxymodeltable.find_many = AsyncMock(return_value=[])
         yield mock_prisma_client
     mock_prisma_client.reset_mock()
 
@@ -630,6 +643,8 @@ async def test_new_team_disable_auto_add_proxy_admin_flag(
     mock_db_client.get_data = AsyncMock(return_value=None)
     mock_db_client.update_data = AsyncMock(return_value=MagicMock())
     mock_db_client.db = MagicMock()
+    mock_db_client.db.litellm_proxymodeltable = MagicMock()
+    mock_db_client.db.litellm_proxymodeltable.find_many = AsyncMock(return_value=[])
 
     team_create_result = MagicMock(team_id="team-789")
     team_create_result.model_dump.return_value = {"team_id": "team-789"}
@@ -667,6 +682,90 @@ async def test_new_team_disable_auto_add_proxy_admin_flag(
     member_add_request = mock_add_members.call_args.kwargs["data"]
     member_user_ids = [m.user_id for m in member_add_request.member]
     assert ("admin-user-1" in member_user_ids) is expect_creator_added
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("audit_enabled", [True, False])
+async def test_new_team_audit_uses_authenticated_caller(
+    mock_db_client, audit_enabled
+):
+    """A successful team creation audits the real caller only when enabled."""
+    import litellm
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    mock_db_client.jsonify_team_object = lambda db_data: db_data
+    mock_db_client.get_data = AsyncMock(return_value=None)
+    mock_db_client.db = MagicMock()
+    team_row = MagicMock(team_id="audit-team")
+    team_row.model_dump.return_value = {"team_id": "audit-team"}
+    mock_db_client.db.litellm_teamtable.create = AsyncMock(return_value=team_row)
+    mock_db_client.db.litellm_teamtable.count = AsyncMock(return_value=0)
+    mock_db_client.db.litellm_proxymodeltable = MagicMock()
+    mock_db_client.db.litellm_proxymodeltable.find_many = AsyncMock(return_value=[])
+    auth = UserAPIKeyAuth(
+        api_key="hashed-test-credential",
+        user_id="real-admin",
+        user_role=LitellmUserRoles.PROXY_ADMIN,
+    )
+
+    with (
+        patch("litellm.store_audit_logs", audit_enabled),
+        patch("litellm.proxy.management_endpoints.team_endpoints._add_team_members_to_team", new_callable=AsyncMock),
+        patch("litellm.proxy.management_endpoints.team_endpoints._validate_team_model_scope_references", new_callable=AsyncMock),
+        patch("litellm.proxy.proxy_server.create_audit_log_for_update", new_callable=AsyncMock) as audit,
+    ):
+        await new_team(
+            data=NewTeamRequest(team_id="audit-team"),
+            http_request=MagicMock(spec=Request),
+            user_api_key_dict=auth,
+            litellm_changed_by="spoofed-admin",
+        )
+        await asyncio.sleep(0)
+
+    if audit_enabled:
+        audit.assert_awaited_once()
+        entry = audit.await_args.kwargs["request_data"]
+        assert entry.object_id == "audit-team"
+        assert entry.action == "created"
+        assert entry.changed_by == "real-admin"
+        assert entry.changed_by_api_key == "hashed-test-credential"
+    else:
+        audit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_team_denied_before_writes_or_audit(mock_db_client):
+    """Organization denial must precede model, team, and audit writes."""
+    import litellm
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    mock_db_client.get_data = AsyncMock(return_value=None)
+    mock_db_client.db = MagicMock()
+    mock_db_client.db.litellm_teamtable.count = AsyncMock(return_value=0)
+    mock_db_client.db.litellm_teamtable.create = AsyncMock()
+    mock_db_client.db.litellm_modeltable.create = AsyncMock()
+    auth = UserAPIKeyAuth(user_id="other-user", user_role=LitellmUserRoles.INTERNAL_USER)
+
+    with (
+        patch("litellm.store_audit_logs", True),
+        patch("litellm.proxy.management_endpoints.team_endpoints._verify_new_team_organization_access", new_callable=AsyncMock, side_effect=HTTPException(status_code=403, detail="not allowed")),
+        patch("litellm.proxy.proxy_server.create_audit_log_for_update", new_callable=AsyncMock) as audit,
+    ):
+        with pytest.raises(Exception, match="not allowed"):
+            await new_team(
+                data=NewTeamRequest(team_id="denied-team", organization_id="other-org"),
+                http_request=MagicMock(spec=Request),
+                user_api_key_dict=auth,
+            )
+        await asyncio.sleep(0)
+
+    mock_db_client.db.litellm_modeltable.create.assert_not_awaited()
+    mock_db_client.db.litellm_teamtable.create.assert_not_awaited()
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2006,9 +2105,11 @@ async def test_update_team_team_member_budget_not_passed_to_db():
     ):
         # Setup mock prisma client
         mock_existing_team = MagicMock()
+        mock_existing_team.organization_id = None
         mock_existing_team.model_dump.return_value = {
             "team_id": "test_team_id",
             "team_alias": "test_team",
+            "organization_id": None,
             "metadata": {"team_member_budget_id": "budget_123"},
         }
         mock_prisma_client.db.litellm_teamtable.find_unique = AsyncMock(
@@ -2438,9 +2539,11 @@ async def test_update_team_with_team_member_budget_duration():
         ) as mock_upsert_budget,
     ):
         mock_existing_team = MagicMock()
+        mock_existing_team.organization_id = None
         mock_existing_team.model_dump.return_value = {
             "team_id": "test_team_id",
             "team_alias": "test_team",
+            "organization_id": None,
             "metadata": {"team_member_budget_id": "budget_123"},
         }
         mock_existing_team.metadata = {"team_member_budget_id": "budget_123"}
@@ -4291,6 +4394,13 @@ async def test_new_team_org_scoped_budget_bypasses_user_limit():
         user_id="org-admin-user-123",
         user_max_budget=3.0,  # Restrictive personal budget
         models=[],  # Empty models list to bypass model validation
+        organization_memberships=[
+            LiteLLM_OrganizationMembershipTable(
+                user_id="org-admin-user-123",
+                organization_id="test-org-123",
+                user_role=LitellmUserRoles.ORG_ADMIN.value,
+            )
+        ],
     )
 
     # Create team request with budget ($50) that's within org's limit but exceeds user's personal limit
@@ -4435,6 +4545,9 @@ async def test_new_team_org_scoped_models_bypasses_user_limit():
         user_id="org-admin-user-456",
         user_max_budget=None,  # No budget restriction for this test
         models=["no-default-models"],  # Restrictive personal models
+        organization_memberships=_org_admin_membership(
+            "org-admin-user-456", "test-org-456"
+        ),
     )
 
     # Create team request with models that are within org's allowed models but not user's
@@ -4723,6 +4836,9 @@ async def test_new_team_org_scoped_budget_exceeds_org_limit():
         user_role=LitellmUserRoles.INTERNAL_USER,
         user_id="org-admin-user-budget-test",
         models=[],
+        organization_memberships=_org_admin_membership(
+            "org-admin-user-budget-test", "test-org-budget-limit"
+        ),
     )
 
     # Create team request with budget ($150) that exceeds org's limit ($100)
@@ -4803,6 +4919,9 @@ async def test_new_team_org_scoped_models_not_in_org_models():
         user_role=LitellmUserRoles.INTERNAL_USER,
         user_id="org-admin-user-models-test",
         models=[],
+        organization_memberships=_org_admin_membership(
+            "org-admin-user-models-test", "test-org-models-limit"
+        ),
     )
 
     # Create team request with model not in org's allowed list
@@ -6142,6 +6261,9 @@ async def test_new_team_org_scoped_tpm_exceeds_org_limit():
         user_role=LitellmUserRoles.INTERNAL_USER,
         user_id="org-admin-tpm-test",
         models=[],
+        organization_memberships=_org_admin_membership(
+            "org-admin-tpm-test", "test-org-tpm"
+        ),
         tpm_limit=1000,  # User's personal limit (should be bypassed for org teams)
     )
 
@@ -6218,6 +6340,9 @@ async def test_new_team_org_scoped_rpm_exceeds_org_limit():
         user_role=LitellmUserRoles.INTERNAL_USER,
         user_id="org-admin-rpm-test",
         models=[],
+        organization_memberships=_org_admin_membership(
+            "org-admin-rpm-test", "test-org-rpm"
+        ),
         rpm_limit=100,  # User's personal limit (should be bypassed for org teams)
     )
 
@@ -6295,6 +6420,9 @@ async def test_new_team_org_scoped_tpm_rpm_bypasses_user_limit():
         user_role=LitellmUserRoles.INTERNAL_USER,
         user_id="org-admin-bypass-test",
         models=[],
+        organization_memberships=_org_admin_membership(
+            "org-admin-bypass-test", "test-org-bypass"
+        ),
         tpm_limit=1000,  # Restrictive user TPM limit
         rpm_limit=100,  # Restrictive user RPM limit
     )
@@ -9139,7 +9267,11 @@ async def test_new_team_encrypts_callback_vars(
     from litellm.proxy.management_endpoints.team_endpoints import new_team
     from litellm.proxy.utils import PrismaClient
 
-    monkeypatch.setenv("LITELLM_SALT_KEY", "test-salt-32-bytes-aaaaaaaaaaaaaa")
+    salt_key = "test-salt-32-bytes-aaaaaaaaaaaaaa"
+    monkeypatch.setenv("LITELLM_SALT_KEY", salt_key)
+    # The helper falls back to the proxy master key in some test import paths;
+    # pin both sources so this test exercises encryption rather than fallback.
+    monkeypatch.setattr("litellm.proxy.proxy_server.master_key", salt_key)
 
     # Use the real jsonify helpers so the encrypted dict goes through the
     # actual JSON serialization production uses (catches non-serializable
@@ -9200,6 +9332,16 @@ def _non_admin_auth():
     )
 
 
+def _org_admin_membership(user_id: str, organization_id: str):
+    return [
+        LiteLLM_OrganizationMembershipTable(
+            user_id=user_id,
+            organization_id=organization_id,
+            user_role=LitellmUserRoles.ORG_ADMIN.value,
+        )
+    ]
+
+
 def test_check_passthrough_routes_caller_permission_team():
     from litellm.proxy._types import NewTeamRequest
     from litellm.proxy.management_endpoints.common_utils import (
@@ -9213,12 +9355,23 @@ def test_check_passthrough_routes_caller_permission_team():
         NewTeamRequest(allowed_passthrough_routes=["/foo/*"]), admin, entity="team"
     )
 
+    # An omitted/empty field is a no-op and does not require elevated access.
     _check_passthrough_routes_caller_permission(
         NewTeamRequest(), non_admin, entity="team"
     )
     _check_passthrough_routes_caller_permission(
         NewTeamRequest(allowed_passthrough_routes=[]), non_admin, entity="team"
     )
+
+    # Setting passthrough routes is a proxy-admin-only operation, including for
+    # team resources. Keep this assertion aligned with the production guard.
+    with pytest.raises(HTTPException) as exc:
+        _check_passthrough_routes_caller_permission(
+            NewTeamRequest(allowed_passthrough_routes=["/team/*"]),
+            non_admin,
+            entity="team",
+        )
+    assert exc.value.status_code == 403
 
     with pytest.raises(HTTPException) as exc:
         _check_passthrough_routes_caller_permission(

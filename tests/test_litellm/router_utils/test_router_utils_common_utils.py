@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from litellm import Router
-from litellm.proxy._types import UserAPIKeyAuth
+from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.router_utils.common_utils import (
     _deployment_supports_web_search,
     add_model_file_id_mappings,
@@ -249,7 +249,7 @@ class TestFilterModelOwnershipScope:
 
         result = filter_model_ownership_scope(deployments, request_kwargs)
 
-        assert [item["model_info"]["id"] for item in result] == ["team-a-model"]
+        assert [item["model_info"]["id"] for item in result] == ["orgless", "team-a-model"]
 
     def test_orgless_proxy_team_can_use_orgless_model(self):
         auth = UserAPIKeyAuth(
@@ -418,6 +418,43 @@ class TestFilterModelOwnershipScope:
         }}
         _, deployments = router._common_checks_available_deployment(model="shared", request_kwargs=request_kwargs)
         assert [item["model_info"]["id"] for item in deployments] == ["orgless"]
+
+    @pytest.mark.parametrize("team_id", ["team-a", "team-b"])
+    def test_same_internal_name_routes_only_authenticated_team(self, team_id):
+        router = Router(model_list=[
+            {
+                "model_name": "shared",
+                "litellm_params": {"model": "openai/gpt-4", "api_key": "sk-placeholder"},
+                "model_info": {
+                    "id": f"{owner}-id", "db_model": True, "team_id": owner,
+                    "xhub_model_scope": "team_only", "team_public_model_name": "shared",
+                },
+            }
+            for owner in ("team-a", "team-b")
+        ])
+        request_kwargs = {"litellm_metadata": {
+            "user_api_key_team_id": team_id,
+            "user_api_key_auth": UserAPIKeyAuth(team_id=team_id),
+        }}
+        _, deployments = router._common_checks_available_deployment(
+            model="shared", request_kwargs=request_kwargs
+        )
+        selected = deployments if isinstance(deployments, list) else [deployments]
+        assert [item["model_info"]["id"] for item in selected] == [f"{team_id}-id"]
+
+        other_team = "team-b" if team_id == "team-a" else "team-a"
+        with pytest.raises(Exception, match="outside the requester's ownership scope"):
+            router._common_checks_available_deployment(
+                model=f"{other_team}-id", request_kwargs=request_kwargs
+            )
+
+        admin_kwargs = {"litellm_metadata": {
+            "user_api_key_auth": UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN)
+        }}
+        with pytest.raises(Exception, match="ownership scope"):
+            router._common_checks_available_deployment(
+                model="shared", request_kwargs=admin_kwargs
+            )
 
     def test_early_team_route_enforces_ownership(self):
         from unittest.mock import patch
