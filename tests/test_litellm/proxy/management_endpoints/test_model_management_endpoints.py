@@ -1021,6 +1021,90 @@ class TestTeamModelSiblingRouting:
         assert mock_team_model_add.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_missing_named_credential_rejects_team_deployment(self):
+        """A missing credential must fail before a team deployment is inserted."""
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _add_team_model_to_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        deployment = Deployment(
+            model_name="credential-required-model",
+            litellm_params=LiteLLM_Params(
+                model="openai/gpt-4o",
+                litellm_credential_name="missing-provider-credential",
+            ),
+            model_info=ModelInfo(team_id="team-credential-check"),
+        )
+        user = UserAPIKeyAuth(
+            user_id="admin",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+        with (
+            patch("litellm.credential_list", []),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.CredentialsRepository.find_by_name",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await _add_team_model_to_db(
+                    model_params=deployment,
+                    user_api_key_dict=user,
+                    prisma_client=MockPrismaClient(team_exists=True),
+                )
+        assert getattr(exc_info.value, "status_code", None) == 422
+
+    @pytest.mark.asyncio
+    async def test_config_named_credential_allows_team_deployment(self):
+        """Config credentials must not require a matching DB row."""
+        import litellm
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            _add_team_model_to_db,
+        )
+        from litellm.types.router import ModelInfo
+
+        deployment = Deployment(
+            model_name="config-credential-model",
+            litellm_params=LiteLLM_Params(
+                model="openai/gpt-4o",
+                litellm_credential_name="config-provider-credential",
+            ),
+            model_info=ModelInfo(team_id="team-config-credential"),
+        )
+        user = UserAPIKeyAuth(
+            user_id="admin",
+            user_role=LitellmUserRoles.PROXY_ADMIN,
+        )
+        with (
+            patch.object(
+                litellm,
+                "credential_list",
+                [MagicMock(credential_name="config-provider-credential")],
+            ),
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.CredentialsRepository.find_by_name",
+                new_callable=AsyncMock,
+            ) as find_by_name,
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints._add_model_to_db",
+                new_callable=AsyncMock,
+            ) as add_model,
+            patch(
+                "litellm.proxy.management_endpoints.model_management_endpoints.team_model_add",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await _add_team_model_to_db(
+                model_params=deployment,
+                user_api_key_dict=user,
+                prisma_client=MockPrismaClient(team_exists=True),
+            )
+        find_by_name.assert_not_awaited()
+        add_model.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_router_finds_all_sibling_team_deployments(self):
         """
         When two team deployments share team_public_model_name="gpt-4.1-mini",

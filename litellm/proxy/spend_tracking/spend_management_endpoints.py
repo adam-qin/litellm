@@ -48,6 +48,29 @@ router = APIRouter()
 SPEND_LOGS_PAGINATION_COUNT_CAP = 10000
 
 
+async def _require_proxy_admin_for_legacy_global_spend(
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+) -> UserAPIKeyAuth:
+    """Fail closed for legacy global spend queries without tenant predicates."""
+    user_role = getattr(user_api_key_dict, "user_role", None)
+    if user_role not in (
+        LitellmUserRoles.PROXY_ADMIN,
+        LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY,
+        LitellmUserRoles.PROXY_ADMIN.value,
+        LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY.value,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": (
+                    "Legacy global spend endpoints require Proxy Admin or "
+                    "Proxy Admin Viewer credentials"
+                )
+            },
+        )
+    return user_api_key_dict
+
+
 @router.get(
     "/spend/keys",
     tags=["Budget & Spend Tracking"],
@@ -829,7 +852,7 @@ async def get_global_activity_exceptions(
 @router.get(
     "/global/spend/provider",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
     responses={
         200: {"model": List[LiteLLM_SpendLogs]},
@@ -957,7 +980,7 @@ async def get_global_spend_provider(
 @router.get(
     "/global/spend/report",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     responses={
         200: {"model": List[LiteLLM_SpendLogs]},
     },
@@ -1246,7 +1269,7 @@ async def get_global_spend_report(
 @router.get(
     "/global/spend/all_tag_names",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
     responses={
         200: {"model": List[LiteLLM_SpendLogs]},
@@ -1298,7 +1321,7 @@ async def global_get_all_tag_names():
 @router.get(
     "/global/spend/tags",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     responses={
         200: {"model": List[LiteLLM_SpendLogs]},
     },
@@ -2612,7 +2635,7 @@ async def global_spend_for_internal_user(
 @router.get(
     "/global/spend/logs",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend_logs(
@@ -2701,7 +2724,7 @@ async def global_spend_logs(
 @router.get(
     "/global/spend",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend():
@@ -2793,7 +2816,7 @@ async def global_spend_key_internal_user(user_api_key_dict: UserAPIKeyAuth, limi
 @router.get(
     "/global/spend/keys",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend_keys(
@@ -2839,7 +2862,7 @@ async def global_spend_keys(
 @router.get(
     "/global/spend/teams",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend_per_team():
@@ -2960,7 +2983,7 @@ async def global_view_all_end_users():
 @router.post(
     "/global/spend/end_users",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend_end_users(data: GlobalEndUsersSpend | None = None):
@@ -3042,7 +3065,7 @@ async def global_spend_models_internal_user(user_api_key_dict: UserAPIKeyAuth, l
 @router.get(
     "/global/spend/models",
     tags=["Budget & Spend Tracking"],
-    dependencies=[Depends(user_api_key_auth)],
+    dependencies=[Depends(_require_proxy_admin_for_legacy_global_spend)],
     include_in_schema=False,
 )
 async def global_spend_models(

@@ -367,6 +367,31 @@ async def test_can_team_member_view_log_admin(monkeypatch):
     assert allowed is True
 
 
+@pytest.mark.asyncio
+async def test_legacy_global_spend_requires_proxy_admin():
+    internal_user = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        user_id="user-a",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await spend_management_endpoints._require_proxy_admin_for_legacy_global_spend(
+            user_api_key_dict=internal_user
+        )
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_spend_allows_proxy_admin_viewer():
+    admin_viewer = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.PROXY_ADMIN_VIEW_ONLY,
+        user_id="viewer",
+    )
+    result = await spend_management_endpoints._require_proxy_admin_for_legacy_global_spend(
+        user_api_key_dict=admin_viewer
+    )
+    assert result is admin_viewer
+
+
 def test_can_user_view_spend_log_true_for_internal_user():
     auth = UserAPIKeyAuth(user_role=LitellmUserRoles.INTERNAL_USER, user_id="u1")
     assert spend_management_endpoints._can_user_view_spend_log(auth) is True

@@ -53,6 +53,7 @@ from litellm.proxy.management_endpoints.team_endpoints import (
 )
 from litellm.proxy.management_helpers.audit_logs import create_object_audit_log
 from litellm.proxy.utils import PrismaClient
+from litellm.repositories.credentials_repository import CredentialsRepository
 from litellm.repositories.model_repository import ModelRepository
 from litellm.repositories.table_repositories import ModelTableRepository
 from litellm.repositories.team_repository import TeamRepository
@@ -523,6 +524,34 @@ async def _add_team_model_to_db(
     _team_id = model_params.model_info.team_id
     if _team_id is None:
         return None
+
+    # Reject a missing named credential before inserting a deployment that can
+    # only fail later at inference time. Inline provider keys remain supported;
+    # named credentials must resolve through the configured credential store.
+    credential_name = getattr(model_params.litellm_params, "litellm_credential_name", None)
+    if credential_name:
+        # Both config.yaml and DB credentials are loaded into this runtime list.
+        # A DB-only lookup incorrectly rejects valid config.yaml credentials.
+        import litellm
+
+        credential_loaded = any(
+            item.credential_name == credential_name
+            for item in (litellm.credential_list or [])
+        )
+        if not credential_loaded:
+            credential_loaded = (
+                await CredentialsRepository(prisma_client).find_by_name(credential_name)
+            ) is not None
+        if not credential_loaded:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": (
+                        f"Provider credential '{credential_name}' was not found; "
+                        "the team deployment was not created"
+                    )
+                },
+            )
 
     # Capture the original public name FIRST, before any mutations
     original_model_name = model_params.model_name
