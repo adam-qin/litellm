@@ -8759,6 +8759,40 @@ async def _models_callable_by_key(
     return callable_models
 
 
+async def _model_rows_callable_by_key(
+    model_rows: List[Dict[str, Any]],
+    user_api_key_dict: UserAPIKeyAuth,
+    llm_router: Optional[Router],
+) -> List[Dict[str, Any]]:
+    """Apply inference authorization to model-info rows before exposing them."""
+    from litellm.proxy.auth.auth_checks import can_key_call_resolved_model
+    from litellm.proxy._types import ProxyException
+
+    callable_rows: List[Dict[str, Any]] = []
+    for row in model_rows:
+        model_info = row.get("model_info") or {}
+        names = []
+        for name in (row.get("model_name"), model_info.get("team_public_model_name")):
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+        row_is_callable = False
+        for name in names:
+            try:
+                await can_key_call_resolved_model(
+                    model=name,
+                    llm_model_list=None,
+                    valid_token=user_api_key_dict,
+                    llm_router=llm_router,
+                )
+            except ProxyException:
+                continue
+            row_is_callable = True
+            break
+        if row_is_callable:
+            callable_rows.append(row)
+    return callable_rows
+
+
 @router.get("/v1/models", dependencies=[Depends(user_api_key_auth)], tags=["model management"])
 @router.get(
     "/models", dependencies=[Depends(user_api_key_auth)], tags=["model management"]
@@ -8885,6 +8919,14 @@ async def model_list(
         if hidden_names:
             all_models = [m for m in all_models if m not in hidden_names]
 
+        # `scope=expand` changes the candidate source for management views, but
+        # it must not turn a management credential into an inference grant. Keep
+        # the public OpenAI-compatible model list aligned with the resolved
+        # ownership check, including the real master credential.
+        all_models = await _models_callable_by_key(
+            all_models, user_api_key_dict, llm_router
+        )
+
         # Surface the public team name by default; legacy internal keys via flag.
         # The internal routing key drives the metadata/fallback lookup, while the
         # public name is what the client sees as the model id.
@@ -8923,8 +8965,7 @@ async def model_list(
 
     # Candidate names alone are not grants: resolved inference authorization
     # below still checks key, team, project and deployment ownership.
-    if not is_master_credential:
-        all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
+    all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
 
     # Hide paused/unhealthy models from the public listing
     if hidden_names:
@@ -9010,10 +9051,11 @@ async def model_info(
         user_api_key_cache=user_api_key_cache,
     )
 
-    # Mirror /v1/models' candidate and inference authorization paths.
-    if not _is_real_master_credential(user_api_key_dict):
-        all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
-        all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
+    # Mirror /v1/models' candidate and inference authorization paths for every
+    # credential. The real master credential is management-capable, but under
+    # scheme A it is not an implicit Team-owned inference credential.
+    all_models = _team_owned_model_candidates(all_models, user_api_key_dict, llm_router)
+    all_models = await _models_callable_by_key(all_models, user_api_key_dict, llm_router)
     blocked_names = llm_router.get_fully_blocked_model_names() if llm_router is not None else set()
     unhealthy_names: set[str] = set()
     if healthy_only and llm_router is not None:
@@ -12468,6 +12510,16 @@ async def model_info_v2(
             debug=debug if debug is not None else False,
             llm_router=llm_router,
         )
+
+    # Keep model-info results consistent with /v1/models and inference for
+    # virtual keys. The real master credential retains the full management
+    # inventory here; its Team-owned inference restriction is enforced by the
+    # data-plane authorization path and by /v1/models.
+    if not is_master_credential:
+        all_models = await _model_rows_callable_by_key(
+            all_models, user_api_key_dict, llm_router
+        )
+        search_total_count = len(all_models)
 
     # Apply teamId filter if provided
     if teamId is not None and teamId.strip():
